@@ -1,0 +1,33 @@
+[package]
+name = "federated_graphql_mock_server"
+version = "0.1.0"
+edition = "2021"
+description = "GraphQLserver genrator with mock data"
+repository = "https://github.com/jeffutter/federated_graphql_mock_server"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.97"
+async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
+# async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
+async-graphql-axum = "7.0.3"
+axum = "0.8.1"
+clap = { version = "4.5.0", features = ["derive", "env"] }
+fake = { version = "4.2.0", features = ["uuid"] }
+graphql-parser = "0.4.1"
+indexmap = "2.8.0"
+mimalloc = { version = "0.1.39" }
+notify = "8.0.0"
+tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
+tower-service = "0.3.3"
+tracing = { version = "0.1.40", features = ["release_max_level_info"] }
+tracing-forest = { version = "0.1.6", features = ["chrono", "ansi", "tokio", "smallvec"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# [patch.crates-io]
+# async-graphql = { path = "../async-graphql/" }
