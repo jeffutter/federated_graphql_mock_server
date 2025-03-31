@@ -15,6 +15,9 @@
         nixpkgs.follows = "nixpkgs";
       };
     };
+    apollo-router = {
+      url = "github:jeffutter/apollo-router-flake/v1.61.1";
+    };
   };
 
   outputs =
@@ -24,6 +27,7 @@
       flake-utils,
       rust-overlay,
       crane,
+      apollo-router,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -76,6 +80,7 @@
               rust-analyzer
               rustc
               rustfmt
+              apollo-router.packages.${system}.default
             ];
           }
           // envVars
