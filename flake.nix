@@ -81,6 +81,7 @@
               rustc
               rustfmt
               apollo-router.packages.${system}.default
+              rover
             ];
           }
           // envVars
