@@ -265,7 +265,7 @@ impl Mocker {
 
         match field {
             Some(mock_field) => self._resolve_mock_field(mock_field),
-            None => todo!(),
+            None => todo!("Obj: {obj_name}, Field: {field_name}"),
         }
     }
 
@@ -653,7 +653,7 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
             Definition::SchemaDefinition(sd) => sd.query,
             _ => None,
         })
-        .expect("No root query found");
+        .unwrap_or("Query");
 
     let mutation_query_name = sdl.definitions.iter().find_map(|d| match d {
         Definition::SchemaDefinition(sd) => sd.mutation,
@@ -696,8 +696,13 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
         })
     {
         for field in &source_object.fields {
+            let source_obj_name = if source_object.name == root_query_name {
+                "Query"
+            } else {
+                source_object.name
+            };
             mock_builder.insert_obj(
-                source_object.name.to_string(),
+                source_obj_name.to_string(),
                 field.name.to_string(),
                 map_field_to_mock_field(field),
             );
@@ -746,6 +751,24 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
         )
         .enable_federation()
         .extension(Tracing)
+        .entity_resolver(|ctx| {
+            FieldFuture::new(async move {
+                let representations = ctx.args.try_get("representations")?.list()?;
+                let mut values = Vec::new();
+
+                for item in representations.iter() {
+                    let item = item.object()?;
+                    let typename = item
+                        .try_get("__typename")
+                        .and_then(|value| value.string())?;
+
+                    //TODO: make sure @key fields are re-used
+                    values.push(FieldValue::borrowed_any(&()).with_type(typename.to_string()));
+                }
+
+                Ok(Some(FieldValue::list(values)))
+            })
+        })
         .finish()?;
     // let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
     let sdl = schema.sdl();
