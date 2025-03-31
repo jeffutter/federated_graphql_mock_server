@@ -19,7 +19,7 @@ use graphql_parser::schema::{
 };
 use indexmap::IndexMap;
 use notify::Watcher;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
     net::TcpListener,
     select,
@@ -28,6 +28,8 @@ use tokio::{
 use tower_service::Service;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+const MOCK_DIRECTIVES: &[&str] = &["word", "listLength"];
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -511,7 +513,7 @@ fn register_input_object<'a>(
 
 fn register_object<'a>(
     schema: SchemaBuilder,
-    source_object: &'a ObjectType<&'a str>,
+    source_object: ObjectType<'a, &'a str>,
 ) -> SchemaBuilder {
     let mut o = Object::new(source_object.name);
     if let Some(description) = source_object.description.as_ref() {
@@ -520,13 +522,47 @@ fn register_object<'a>(
 
     let o = source_object
         .directives
-        .iter()
+        .into_iter()
+        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
         .fold(o, |o, source_directive| {
-            o.directive(source_directive.arguments.iter().fold(
+            if source_directive.name == "key" {
+                let keys = source_directive
+                    .arguments
+                    .iter()
+                    .filter(|d| d.0 == "fields")
+                    .filter_map(|d| match d.1 {
+                        graphql_parser::query::Value::String(ref s) => Some(s),
+                        _ => None,
+                    });
+                let unresolvable = source_directive.arguments.iter().any(|d| {
+                    if d.0 != "resolvable" {
+                        return false;
+                    }
+
+                    match d.1 {
+                        graphql_parser::query::Value::Boolean(b) => !b,
+                        _ => false,
+                    }
+                });
+
+                let o = keys.fold(o, |o, key| o.key(key));
+
+                // Not sure this is correct, it might need to propagate these values to the fields
+                // on the object
+                let o = if unresolvable {
+                    o.unresolvable("true")
+                } else {
+                    o
+                };
+
+                return o;
+            }
+
+            o.directive(source_directive.arguments.into_iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
+                    d.argument(k.to_string(), v)
                 },
             ))
         });
@@ -536,46 +572,54 @@ fn register_object<'a>(
         .iter()
         .fold(o, |o, interface| o.implement(*interface));
 
-    schema.register(source_object.fields.iter().fold(o, |object, source_field| {
-        let field_type = map_type_to_typeref(&source_field.field_type);
+    schema.register(
+        source_object
+            .fields
+            .into_iter()
+            .fold(o, |object, source_field| {
+                let field_type = map_type_to_typeref(&source_field.field_type);
 
-        let source_object_name = source_object.name.to_string();
-        let field_name = source_field.name.to_string();
+                let source_object_name = source_object.name.to_string();
+                let field_name = source_field.name.to_string();
 
-        // println!(
-        //     "Directives ({}-{}): {:#?}",
-        //     source_object.name, source_field.name, source_field.directives
-        // );
+                // println!(
+                //     "Directives ({}-{}): {:#?}",
+                //     source_object.name, source_field.name, source_field.directives
+                // );
 
-        let field = Field::new(field_name.clone(), field_type, move |ctx| {
-            let source_object_name = source_object_name.clone();
-            let field_name = field_name.clone();
+                let field = Field::new(field_name.clone(), field_type, move |ctx| {
+                    let source_object_name = source_object_name.clone();
+                    let field_name = field_name.clone();
 
-            ctx.data::<Mocker>()
-                .unwrap()
-                .get_obj(source_object_name, field_name)
-        });
+                    ctx.data::<Mocker>()
+                        .unwrap()
+                        .get_obj(source_object_name, field_name)
+                });
 
-        let field = source_field
-            .directives
-            .iter()
-            .fold(field, |f, source_directive| {
-                let d = source_directive.arguments.iter().fold(
-                    Directive::new(source_directive.name),
-                    |d, (k, v)| {
-                        let v = parser_value_to_query_value(v);
-                        d.argument(*k, v)
-                    },
-                );
-                f.directive(d)
-            });
+                let field = source_field
+                    .directives
+                    .into_iter()
+                    .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+                    .fold(field, |f, source_directive| {
+                        let d = source_directive.arguments.into_iter().fold(
+                            Directive::new(source_directive.name),
+                            |d, (k, v)| {
+                                let v = parser_value_to_query_value(v);
+                                d.argument(k, v)
+                            },
+                        );
+                        f.directive(d)
+                    });
 
-        object.field(field)
-    }))
+                object.field(field)
+            }),
+    )
 }
 
-fn parser_value_to_query_value<'a>(v: &'a graphql_parser::query::Value<&'a str>) -> Value {
-    match v {
+fn parser_value_to_query_value<'a>(
+    v: impl Borrow<graphql_parser::query::Value<'a, &'a str>>,
+) -> Value {
+    match v.borrow() {
         graphql_parser::query::Value::Variable(_) => todo!(),
         graphql_parser::query::Value::Int(number) => Value::from(number.as_i64().unwrap()),
         graphql_parser::query::Value::Float(f) => Value::from(*f),
@@ -585,10 +629,7 @@ fn parser_value_to_query_value<'a>(v: &'a graphql_parser::query::Value<&'a str>)
         graphql_parser::query::Value::Enum(e) => Value::Enum(Name::new(e)),
         graphql_parser::query::Value::List(values) => Value::List(
             // V could be any value type, probably need to recurse
-            values
-                .iter()
-                .map(|v| parser_value_to_query_value(v))
-                .collect(),
+            values.iter().map(parser_value_to_query_value).collect(),
         ),
         graphql_parser::query::Value::Object(btree_map) => {
             Value::Object(IndexMap::from_iter(
@@ -671,12 +712,7 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
         .clone()
         .iter()
         .fold(
-            Schema::build(
-                root_query_name,
-                mutation_query_name,
-                subscription_query_name,
-            )
-            .data(mocker),
+            Schema::build("Query", mutation_query_name, subscription_query_name).data(mocker),
             |schema, definition| match definition {
                 Definition::SchemaDefinition(_schema_definition) => schema,
                 Definition::TypeDefinition(source_type_definition) => {
@@ -685,6 +721,13 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
                             register_scalar(schema, source_scalar)
                         }
                         TypeDefinition::Object(source_object) => {
+                            let source_object = if source_object.name == root_query_name {
+                                let mut source_object = source_object.clone();
+                                source_object.name = "Query";
+                                source_object
+                            } else {
+                                source_object.clone()
+                            };
                             register_object(schema, source_object)
                         }
                         TypeDefinition::Interface(source_interface) => {
@@ -704,7 +747,9 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
         .enable_federation()
         .extension(Tracing)
         .finish()?;
-    // println!("BUILT SCHEMA: {}", schema.sdl());
+    // let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
+    let sdl = schema.sdl();
+    println!("BUILT SCHEMA: {}", sdl);
 
     Ok(GraphQL::new(schema))
 }
