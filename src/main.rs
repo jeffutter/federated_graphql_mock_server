@@ -305,20 +305,23 @@ impl Mocker {
                         return Ok(Some(val));
                     }
 
-                    let mut res: IndexMap<Name, Value> = IndexMap::new();
-                    let keys = self
-                        .data
-                        .get(&obj_name)
-                        .map(|hm| hm.keys())
-                        .unwrap_or_default();
+                    // let mut res: IndexMap<Name, Value> = IndexMap::new();
+                    // let keys = self
+                    //     .data
+                    //     .get(&obj_name)
+                    //     .map(|hm| hm.keys())
+                    //     .unwrap_or_default();
+                    //
+                    // for k in keys {
+                    //     if let Some(v) = self._get_obj(&obj_name, k).unwrap() {
+                    //         res.insert(Name::new(k), v.clone());
+                    //     }
+                    // }
 
-                    for k in keys {
-                        if let Some(v) = self._get_obj(&obj_name, k).unwrap() {
-                            res.insert(Name::new(k), v.clone());
-                        }
-                    }
+                    // Ok(Some(Value::from(res)))
 
-                    Ok(Some(Value::from(res)))
+                    // Return an empty object, the resolvers on the fields will fill the object out
+                    Ok(Some(Value::from(IndexMap::new())))
                 }
             },
         }
@@ -587,9 +590,24 @@ fn register_object<'a>(
                 //     source_object.name, source_field.name, source_field.directives
                 // );
 
-                let field = Field::new(field_name.clone(), field_type, move |ctx| {
+                let field = Field::new(field_name.clone(), field_type.clone(), move |ctx| {
                     let source_object_name = source_object_name.clone();
                     let field_name = field_name.clone();
+
+                    let parent_map = ctx.parent_value.as_value().and_then(|v| match v {
+                        Value::Object(index_map) => Some(index_map),
+                        _ => None,
+                    });
+
+                    if let Some(parent_map) = parent_map {
+                        let field_name = &Name::new(field_name.clone());
+
+                        if let Some(existing_value) = parent_map.get(field_name) {
+                            return FieldFuture::new(async move {
+                                Ok(Some::<FieldValue>(existing_value.to_owned().into()))
+                            });
+                        }
+                    }
 
                     ctx.data::<Mocker>()
                         .unwrap()
@@ -628,14 +646,14 @@ fn parser_value_to_query_value<'a>(
         graphql_parser::query::Value::Null => Value::Null,
         graphql_parser::query::Value::Enum(e) => Value::Enum(Name::new(e)),
         graphql_parser::query::Value::List(values) => Value::List(
-            // V could be any value type, probably need to recurse
+            // V could be any value type, possibly need to recurse
             values.iter().map(parser_value_to_query_value).collect(),
         ),
         graphql_parser::query::Value::Object(btree_map) => {
             Value::Object(IndexMap::from_iter(
                 btree_map
                     .iter()
-                    // V could be any value type, probably need to recurse
+                    // V could be any value type, possibly need to recurse
                     .map(|(k, v)| (Name::new(k), parser_value_to_query_value(v))),
             ))
         }
@@ -754,17 +772,17 @@ fn build_handler(path: &PathBuf) -> anyhow::Result<GraphQL<Schema>> {
         .entity_resolver(|ctx| {
             FieldFuture::new(async move {
                 let representations = ctx.args.try_get("representations")?.list()?;
-                let mut values = Vec::new();
 
-                for item in representations.iter() {
-                    let item = item.object()?;
+                let values = representations.iter().map(|item| {
+                    let item = item.object().unwrap();
                     let typename = item
                         .try_get("__typename")
-                        .and_then(|value| value.string())?;
+                        .and_then(|value| value.string())
+                        .unwrap();
 
-                    //TODO: make sure @key fields are re-used
-                    values.push(FieldValue::borrowed_any(&()).with_type(typename.to_string()));
-                }
+                    FieldValue::from(Value::from(item.as_index_map().to_owned()))
+                        .with_type(typename.to_string())
+                });
 
                 Ok(Some(FieldValue::list(values)))
             })
