@@ -29,7 +29,7 @@ use tower_service::Service;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-const MOCK_DIRECTIVES: &[&str] = &["word", "listLength"];
+const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "nullProbability"];
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -83,15 +83,27 @@ fn map_type_to_typeref<'a>(ty: &graphql_parser::query::Type<'a, &'a str>) -> Typ
 fn map_field_to_mock_field<'a>(field: &graphql_parser::schema::Field<'a, &'a str>) -> MockField {
     use graphql_parser::query::Type;
 
+    let null = field.directives.iter().find(|d| d.name == "null");
+
+    let null_probability: f64 = null
+        .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "probability"))
+        .and_then(|(_, v)| match v {
+            graphql_parser::query::Value::Int(number) => number.as_i64().map(|x| x as f64),
+            graphql_parser::query::Value::Float(f) => Some(*f),
+            graphql_parser::query::Value::Null => Some(0.0),
+            _ => panic!(),
+        })
+        .unwrap_or(0.05);
+
     match &field.field_type {
-        Type::NamedType(_) => MockField::Nullable(map_type_to_mock_contents(
-            &field.field_type,
-            &field.directives,
-        )),
-        Type::ListType(inner) => MockField::Nullable(map_type_to_mock_contents(
-            &Type::ListType(inner.clone()),
-            &field.directives,
-        )),
+        Type::NamedType(_) => MockField::Nullable(
+            1.0 - null_probability,
+            map_type_to_mock_contents(&field.field_type, &field.directives),
+        ),
+        Type::ListType(inner) => MockField::Nullable(
+            1.0 - null_probability,
+            map_type_to_mock_contents(&Type::ListType(inner.clone()), &field.directives),
+        ),
         Type::NonNullType(inner) => {
             MockField::NonNull(map_type_to_mock_contents(inner, &field.directives))
         }
@@ -330,8 +342,8 @@ impl Mocker {
     fn _resolve_mock_field(&self, mock_field: MockField) -> async_graphql::Result<Option<Value>> {
         match mock_field {
             MockField::NonNull(mock_contents) => self._resolve_mock_contents(mock_contents),
-            MockField::Nullable(mock_contents) => {
-                if !rand::random_bool(9.0 / 10.0) {
+            MockField::Nullable(null_probability, mock_contents) => {
+                if !rand::random_bool(null_probability) {
                     return Ok(None);
                 }
 
@@ -344,7 +356,7 @@ impl Mocker {
 #[derive(Clone, Debug)]
 enum MockField {
     NonNull(MockContents),
-    Nullable(MockContents),
+    Nullable(f64, MockContents),
 }
 
 #[derive(Clone, Debug)]
