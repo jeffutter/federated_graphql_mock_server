@@ -435,9 +435,9 @@ fn register_interface<'a>(
         .iter()
         .fold(i, |i, interface| i.implement(*interface));
 
-    schema.register(source_interface.fields.iter().fold(i, |i, field| {
-        let field_type = map_type_to_typeref(&field.field_type);
-        i.field(InterfaceField::new(source_interface.name, field_type))
+    schema.register(source_interface.fields.iter().fold(i, |i, source_field| {
+        let field_type = map_type_to_typeref(&source_field.field_type);
+        i.field(InterfaceField::new(source_field.name, field_type))
     }))
 }
 
