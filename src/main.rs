@@ -29,7 +29,7 @@ use tower_service::Service;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "nullProbability"];
+const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null"];
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
