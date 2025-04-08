@@ -16,7 +16,7 @@ axum = "0.8.1"
 clap = { version = "4.5.0", features = ["derive", "env"] }
 fake = { version = "4.2.0", features = ["uuid"] }
 graphql-parser = "0.4.1"
-indexmap = "2.8.0"
+indexmap = "2.9.0"
 mimalloc = { version = "0.1.39" }
 notify = "8.0.0"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
