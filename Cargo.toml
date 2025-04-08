@@ -13,7 +13,7 @@ async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
 async-graphql-axum = "7.0.3"
 axum = "0.8.1"
-clap = { version = "4.5.0", features = ["derive", "env"] }
+clap = { version = "4.5.35", features = ["derive", "env"] }
 fake = { version = "4.2.0", features = ["uuid"] }
 graphql-parser = "0.4.1"
 indexmap = "2.8.0"
