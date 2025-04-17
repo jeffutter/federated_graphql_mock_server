@@ -12,13 +12,16 @@ anyhow = "1.0.97"
 async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
 async-graphql-axum = "7.0.3"
+async-stream = "0.3.6"
 axum = "0.8.1"
 clap = { version = "4.5.0", features = ["derive", "env"] }
 fake = { version = "4.2.0", features = ["uuid"] }
+futures-core = "0.3.31"
 graphql-parser = "0.4.1"
 indexmap = "2.8.0"
 mimalloc = { version = "0.1.39" }
 notify = "8.0.0"
+rand = "0.9.0"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
 tower-service = "0.3.3"
 tracing = { version = "0.1.40", features = ["release_max_level_info"] }
