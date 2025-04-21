@@ -14,7 +14,7 @@ async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
 async-graphql-axum = "7.0.3"
 async-stream = "0.3.6"
 axum = "0.8.1"
-clap = { version = "4.5.0", features = ["derive", "env"] }
+clap = { version = "4.5.37", features = ["derive", "env"] }
 fake = { version = "4.2.0", features = ["uuid"] }
 futures-core = "0.3.31"
 graphql-parser = "0.4.1"
