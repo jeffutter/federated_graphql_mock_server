@@ -1,4 +1,4 @@
-use crate::schema;
+use crate::schema::{self, Mocker};
 use async_graphql::{dynamic::*, extensions::Tracing, http::GraphiQLSource, Value};
 use async_graphql_axum::GraphQL;
 use axum::{
@@ -15,7 +15,9 @@ use tokio::{
     select,
     sync::{mpsc, Mutex},
 };
+use tower_http::trace::TraceLayer;
 use tower_service::Service;
+use tracing::{trace, Instrument};
 
 async fn graphiql() -> impl IntoResponse {
     response::Html(GraphiQLSource::build().endpoint("/").finish())
@@ -28,16 +30,21 @@ pub async fn start_server(
 ) -> anyhow::Result<()> {
     let handler = Arc::new(Mutex::new(build_handler(&schema_path, &output_path)?));
 
-    let app = Router::new().route(
-        "/",
-        get(graphiql).post_service(post({
-            let handler = handler.clone();
-            move |req| async move {
-                let mut h = handler.lock().await;
-                h.call(req).await
-            }
-        })),
-    );
+    let app = Router::new()
+        .route(
+            "/",
+            get(graphiql).post_service(post({
+                let handler = handler.clone();
+                move |req| {
+                    async move {
+                        let mut h = handler.lock().await;
+                        h.call(req).await
+                    }
+                    .in_current_span()
+                }
+            })),
+        )
+        .layer(TraceLayer::new_for_http());
 
     let handler = handler.clone();
     let path = schema_path.clone();
@@ -160,6 +167,35 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
         }
     }
 
+    for source_interface in sdl
+        .definitions
+        .iter()
+        .filter_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Interface(source_interface)) => {
+                Some(source_interface)
+            }
+            _ => None,
+        })
+    {
+        let implementers = sdl
+            .definitions
+            .iter()
+            .filter_map(|definition| match definition {
+                Definition::TypeDefinition(TypeDefinition::Object(obj)) => {
+                    if obj
+                        .implements_interfaces
+                        .iter()
+                        .any(|o_i| o_i == &source_interface.name.to_string())
+                    {
+                        Some(obj.name.to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            });
+    }
+
     let mocker = mock_builder.build();
     // println!("Mocker: {:#?}", mocker);
 
@@ -212,24 +248,40 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
         .enable_federation()
         .extension(Tracing)
         .entity_resolver(|ctx| {
-            FieldFuture::new(async move {
-                let representations = ctx.args.try_get("representations")?.list()?;
+            // trace!("Entity Resolver Args: {:?}", ctx.args.as_index_map());
 
-                let values = representations.iter().map(|item| {
-                    let item = item.object().unwrap();
-                    let typename = item
-                        .try_get("__typename")
-                        .and_then(|value| value.string())
-                        .unwrap();
+            FieldFuture::new(
+                async move {
+                    let representations = ctx.args.try_get("representations")?.list()?;
+                    trace!(
+                        "Entity Resolver Representations: {:#?}",
+                        representations.as_values_slice()
+                    );
 
-                    FieldValue::from(Value::from(item.as_index_map().to_owned()))
-                        .with_type(typename.to_string())
-                });
+                    let values = representations.iter().map(|item| {
+                        let item = item.object().unwrap();
+                        let typename = item
+                            .try_get("__typename")
+                            .and_then(|value| value.string())
+                            .unwrap();
 
-                Ok(Some(FieldValue::list(values)))
-            })
+                        let res = ctx.data::<Mocker>().unwrap().get_whole_obj(typename);
+
+                        trace!("Value: {:?}", res);
+
+                        res.with_type(typename.to_string())
+
+                        // FieldValue::from(Value::from(item.as_index_map().to_owned()))
+                        //     .with_type(typename.to_string())
+                    });
+
+                    Ok(Some(FieldValue::list(values)))
+                }
+                .in_current_span(),
+            )
         })
         .finish()?;
+
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
     // let sdl = schema.sdl();
     // println!("BUILT SCHEMA: {}", sdl);

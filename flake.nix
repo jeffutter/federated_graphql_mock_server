@@ -16,7 +16,7 @@
       };
     };
     apollo-router = {
-      url = "github:jeffutter/apollo-router-flake/v1.61.1";
+      url = "github:jeffutter/apollo-router-flake/v1.61.4";
     };
   };
 
@@ -81,7 +81,26 @@
               rustc
               rustfmt
               apollo-router.packages.${system}.default
-              rover
+              # rover
+              (rover.overrideAttrs (
+                finalAttrs: prevAttrs: rec {
+                  version = "0.28.1";
+                  src = fetchFromGitHub {
+                    owner = prevAttrs.src.owner;
+                    repo = prevAttrs.src.repo;
+                    rev = "v${version}";
+                    sha256 = "sha256-y+YtNV+Pzb9TxvZ9QpWNk0+qfjEy5TTMWUJMaACe3kI=";
+                  };
+                  # cargoDeps = prevAttrs.cargoDeps.overrideAttrs (_: {
+                  #   inherit src;
+                  #   outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                  # });
+                  cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
+                    inherit (finalAttrs) pname src version;
+                    hash = "sha256-8KQ8ahKgg/F75qYY4Kf2J8zywUoSLi3DtGHaJCD/Zpc=";
+                  };
+                }
+              ))
               mprocs
               entr
             ];

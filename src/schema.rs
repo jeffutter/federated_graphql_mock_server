@@ -12,6 +12,7 @@ use graphql_parser::schema::{
 };
 use indexmap::IndexMap;
 use std::{borrow::Borrow, collections::HashMap, pin::Pin, sync::Arc};
+use tracing::{instrument, trace, Level};
 
 const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values"];
 
@@ -195,7 +196,7 @@ fn map_type_to_mock_contents<'a>(
                     graphql_parser::query::Value::Null => 0,
                     _ => panic!(),
                 })
-                .unwrap_or(0);
+                .unwrap_or(1);
             let max: usize = list_length
                 .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "max"))
                 .map(|(_, v)| match v {
@@ -205,7 +206,7 @@ fn map_type_to_mock_contents<'a>(
                     graphql_parser::query::Value::Null => 10,
                     _ => panic!(),
                 })
-                .unwrap_or(0);
+                .unwrap_or(1);
 
             if max < min {
                 panic!("Max: {max} is less than Min: {min}");
@@ -271,6 +272,7 @@ impl Mocker {
         MockerBuilder::new()
     }
 
+    #[instrument(level = Level::TRACE, skip(self))]
     fn _get_enum(&self, enum_name: String) -> async_graphql::Result<Option<Value>> {
         match self.enums.get(&enum_name) {
             Some(en) => {
@@ -281,10 +283,13 @@ impl Mocker {
         }
     }
 
-    fn get_obj(&self, obj_name: String, field_name: String) -> FieldFuture<'_> {
+    #[instrument(level = Level::TRACE, skip(self))]
+    pub fn get_obj(&self, obj_name: String, field_name: String) -> FieldFuture<'_> {
+        trace!("Get Obj: {obj_name}.{field_name}");
         FieldFuture::new(async move { self._get_obj(&obj_name, &field_name) })
     }
 
+    #[instrument(level = Level::TRACE, skip(self))]
     fn get_obj_stream(&self, obj_name: String, field_name: String) -> SubscriptionFieldFuture<'_> {
         SubscriptionFieldFuture::new(async move {
             let stream = async_stream::stream! {
@@ -295,6 +300,27 @@ impl Mocker {
         })
     }
 
+    #[instrument(level = Level::TRACE, skip(self))]
+    pub fn get_whole_obj(&self, obj_name: &str) -> FieldValue {
+        let obj = self.data.get(obj_name);
+
+        match obj {
+            Some(obj) => {
+                let mocked = obj.iter().filter_map(|(f, mf)| {
+                    self._resolve_mock_field(mf.clone())
+                        .map(|v| v.map(|v| (Name::new(f), v)))
+                        .unwrap()
+                });
+
+                let map = IndexMap::from_iter(mocked);
+
+                FieldValue::from(Value::from(map))
+            }
+            None => FieldValue::NULL,
+        }
+    }
+
+    #[instrument(level = Level::TRACE, skip(self))]
     fn _get_obj(&self, obj_name: &str, field_name: &str) -> async_graphql::Result<Option<Value>> {
         let field = self
             .data
@@ -308,6 +334,7 @@ impl Mocker {
         }
     }
 
+    #[instrument(level = Level::TRACE, skip(self))]
     fn _resolve_mock_contents(
         &self,
         mock_contents: MockContents,
@@ -318,6 +345,7 @@ impl Mocker {
                 let MockFieldList { contents, min, max } = *mock_field_list;
 
                 let n = fake::rand::random_range(min..=max);
+                trace!("List: {:?} - {}..{} = {}", contents, min, max, n);
                 let mut out = Vec::with_capacity(n);
 
                 for _ in 0..n {
@@ -350,35 +378,47 @@ impl Mocker {
                         return Ok(Some(val));
                     }
 
-                    // let mut res: IndexMap<Name, Value> = IndexMap::new();
-                    // let keys = self
-                    //     .data
-                    //     .get(&obj_name)
-                    //     .map(|hm| hm.keys())
-                    //     .unwrap_or_default();
-                    //
-                    // for k in keys {
-                    //     if let Some(v) = self._get_obj(&obj_name, k).unwrap() {
-                    //         res.insert(Name::new(k), v.clone());
-                    //     }
-                    // }
+                    // println!("Data: {:#?}", self.data);
 
-                    // Ok(Some(Value::from(res)))
+                    let mut res: IndexMap<Name, Value> = IndexMap::new();
+                    let keys = self
+                        .data
+                        .get(&obj_name)
+                        .inspect(|x| trace!("Get: {:?}", x))
+                        .map(|hm| hm.keys())
+                        .unwrap_or_default();
+
+                    trace!("Ref({obj_name}) Keys: {:?}", keys);
+
+                    for k in keys {
+                        if let Some(v) = self._get_obj(&obj_name, k).unwrap() {
+                            res.insert(Name::new(k), v.clone());
+                        }
+                    }
+
+                    Ok(Some(Value::from(res)))
 
                     // Return an empty object, the resolvers on the fields will fill the object out
-                    Ok(Some(Value::from(IndexMap::new())))
+                    // Ok(Some(Value::from(IndexMap::new())))
                 }
             },
         }
     }
 
+    #[instrument(level = Level::TRACE, skip(self))]
     fn _resolve_mock_field(&self, mock_field: MockField) -> async_graphql::Result<Option<Value>> {
         match mock_field {
-            MockField::NonNull(mock_contents) => self._resolve_mock_contents(mock_contents),
+            MockField::NonNull(mock_contents) => {
+                trace!("Not Null");
+                self._resolve_mock_contents(mock_contents)
+            }
             MockField::Nullable(null_probability, mock_contents) => {
                 if !rand::random_bool(null_probability) {
+                    trace!("Null");
                     return Ok(None);
                 }
+
+                trace!("Not Null");
 
                 self._resolve_mock_contents(mock_contents)
             }
@@ -700,24 +740,19 @@ pub fn register_object<'a>(
             let source_object_name = source_object.name.to_string();
             let field_name = source_field.name.to_string();
 
-            // println!(
-            //     "Directives ({}-{}): {:#?}",
-            //     source_object.name, source_field.name, source_field.directives
-            // );
-
             let field = Field::new(field_name.clone(), field_type.clone(), move |ctx| {
                 let source_object_name = source_object_name.clone();
+                trace!(
+                    "Resolve Field: {source_object_name}.{field_name} - Args: {:?}",
+                    ctx.args.as_index_map()
+                );
                 let field_name = field_name.clone();
 
-                let parent_map = ctx.parent_value.as_value().and_then(|v| match v {
-                    Value::Object(index_map) => Some(index_map),
-                    _ => None,
-                });
-
-                if let Some(parent_map) = parent_map {
+                if let Some(Value::Object(parent_map)) = ctx.parent_value.as_value() {
                     let field_name = &Name::new(field_name.clone());
 
                     if let Some(existing_value) = parent_map.get(field_name) {
+                        trace!("Parent Exists: {field_name} = {:?}", existing_value);
                         return FieldFuture::new(async move {
                             Ok(Some::<FieldValue>(existing_value.to_owned().into()))
                         });
@@ -747,6 +782,5 @@ pub fn register_object<'a>(
             object.field(field)
         });
 
-    println!("Registering: {:?}", o);
     schema.register(o)
 }

@@ -4,7 +4,9 @@ mod server;
 use clap::Parser;
 use std::path::PathBuf;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{
+    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -37,7 +39,12 @@ fn setup_tracing(args: &Args) {
             .init();
     } else {
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_filter(default_filter))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_span_events(FmtSpan::ENTER)
+                    .with_span_events(FmtSpan::EXIT)
+                    .with_filter(default_filter),
+            )
             .init();
     };
 }
