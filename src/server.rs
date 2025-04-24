@@ -103,6 +103,16 @@ pub async fn start_server(
 
 fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<GraphQL<Schema>> {
     let sdl_str = std::fs::read_to_string(path)?;
+
+    _build_handler(sdl_str).map(|(sdl, graphql)| {
+        if let Some(output) = output {
+            std::fs::write(output, sdl).unwrap();
+        }
+        graphql
+    })
+}
+
+fn _build_handler(sdl_str: String) -> anyhow::Result<(String, GraphQL<Schema>)> {
     let sdl: Document<&str> = graphql_parser::parse_schema(&sdl_str)?;
     let mock_graph = MockGraph::builder().process_document(&sdl).build();
 
@@ -199,7 +209,7 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
 
                         trace!("Value: {:?}", res);
 
-                        FieldValue::from(res).with_type(typename.to_string())
+                        res.with_type(typename.to_string())
                     });
 
                     Ok(Some(FieldValue::list(values)))
@@ -211,9 +221,111 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
 
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
 
-    if let Some(output) = output {
-        std::fs::write(output, sdl).unwrap();
-    }
+    Ok((sdl, GraphQL::new(schema)))
+}
 
-    Ok(GraphQL::new(schema))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[tokio::test]
+    async fn test_entity_query() {
+        let schema = r#"
+        type Query {
+          user: User
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          a: A!
+          b: B
+        }
+
+        interface A {
+          id: ID!
+        }
+
+        type AA implements A {
+          id: ID!
+          name: String
+        }
+
+        type AB implements A {
+          id: ID!
+          name: String
+        }
+
+        type B {
+          id: ID!
+        }
+        "#;
+
+        // Build the handler with our test schema
+        let (_, mut graphql) = _build_handler(schema.to_string()).expect("Failed to build handler");
+
+        // Create an entity query that requests User with its A and B fields
+        let query = r#"
+          query($representations: [_Any!]!) {
+            _entities(representations: $representations) {
+              ... on User {
+                id
+                a {
+                  id
+                  __typename
+                }
+                b {
+                  id
+                }
+              }
+            }
+          }
+        "#;
+
+        // Create the variables with a representation for a User entity
+        let request = json!({
+            "query": query,
+            "variables": {
+                "representations": [
+                    {
+                        "__typename": "User",
+                        "id": "user-123"
+                    }
+                ]
+            }
+        });
+
+        // Create the GraphQL request
+        // let request = GraphQLRequest::new(query.to_string(), Some("".to_string()), Some(variables));
+        let http_request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("content-type", "application/json")
+            .body(serde_json::to_string(&request).unwrap())
+            .unwrap();
+
+        // Execute the query
+        let response = graphql.call(http_request).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        // Verify the response contains the expected structure
+        assert!(json.get("data").is_some());
+        let entities = json["data"]["_entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+
+        let user = &entities[0];
+        assert!(user.get("id").is_some());
+        assert!(user.get("a").is_some());
+        assert!(user["a"].get("id").is_some());
+
+        // B might be null sometimes due to the nullable field, so check conditionally
+        if let Some(b) = user.get("b") {
+            if !b.is_null() {
+                assert!(b.get("id").is_some());
+            }
+        }
+    }
 }
