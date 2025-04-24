@@ -1,5 +1,5 @@
-use crate::schema::{self, Mocker};
-use async_graphql::{dynamic::*, extensions::Tracing, http::GraphiQLSource, Value};
+use crate::schema;
+use async_graphql::{dynamic::*, extensions::Tracing, http::GraphiQLSource};
 use async_graphql_axum::GraphQL;
 use axum::{
     response::{self, IntoResponse},
@@ -7,6 +7,7 @@ use axum::{
     Router,
 };
 use core::panic;
+use federated_graphql_mock_server::mock_graph::MockGraph;
 use graphql_parser::schema::{Definition, Document, TypeDefinition};
 use notify::Watcher;
 use std::{path::PathBuf, sync::Arc};
@@ -103,6 +104,7 @@ pub async fn start_server(
 fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<GraphQL<Schema>> {
     let sdl_str = std::fs::read_to_string(path)?;
     let sdl: Document<&str> = graphql_parser::parse_schema(&sdl_str)?;
+    let mock_graph = MockGraph::builder().process_document(&sdl).build();
 
     let root_query_name = sdl
         .definitions
@@ -123,88 +125,12 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
         _ => None,
     });
 
-    let mut mock_builder = schema::Mocker::builder();
-
-    for source_enum in sdl
-        .definitions
-        .iter()
-        .filter_map(|definition| match definition {
-            Definition::TypeDefinition(TypeDefinition::Enum(en)) => Some(en),
-            _ => None,
-        })
-    {
-        mock_builder.insert_enum(
-            source_enum.name.to_string(),
-            source_enum
-                .values
-                .iter()
-                .map(|s| s.name.to_string())
-                .collect(),
-        );
-    }
-
-    for source_object in sdl
-        .definitions
-        .iter()
-        .filter_map(|definition| match definition {
-            Definition::TypeDefinition(TypeDefinition::Object(source_object)) => {
-                Some(source_object)
-            }
-            _ => None,
-        })
-    {
-        for field in &source_object.fields {
-            let source_obj_name = if source_object.name == root_query_name {
-                "Query"
-            } else {
-                source_object.name
-            };
-            mock_builder.insert_obj(
-                source_obj_name.to_string(),
-                field.name.to_string(),
-                schema::map_field_to_mock_field(field),
-            );
-        }
-    }
-
-    for source_interface in sdl
-        .definitions
-        .iter()
-        .filter_map(|definition| match definition {
-            Definition::TypeDefinition(TypeDefinition::Interface(source_interface)) => {
-                Some(source_interface)
-            }
-            _ => None,
-        })
-    {
-        let implementers = sdl
-            .definitions
-            .iter()
-            .filter_map(|definition| match definition {
-                Definition::TypeDefinition(TypeDefinition::Object(obj)) => {
-                    if obj
-                        .implements_interfaces
-                        .iter()
-                        .any(|o_i| o_i == &source_interface.name.to_string())
-                    {
-                        Some(obj.name.to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            });
-    }
-
-    let mocker = mock_builder.build();
-    // println!("Mocker: {:#?}", mocker);
-
     let schema = sdl
         .definitions
         .clone()
         .iter()
         .fold(
-            Schema::build("Query", mutation_query_name, subscription_query_name).data(mocker),
+            Schema::build("Query", mutation_query_name, subscription_query_name).data(mock_graph),
             |schema, definition| match definition {
                 Definition::SchemaDefinition(_schema_definition) => schema,
                 Definition::TypeDefinition(source_type_definition) => {
@@ -265,14 +191,15 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
                             .and_then(|value| value.string())
                             .unwrap();
 
-                        let res = ctx.data::<Mocker>().unwrap().get_whole_obj(typename);
+                        let res = ctx
+                            .data::<MockGraph>()
+                            .unwrap()
+                            .resolve_obj(typename)
+                            .unwrap();
 
                         trace!("Value: {:?}", res);
 
-                        res.with_type(typename.to_string())
-
-                        // FieldValue::from(Value::from(item.as_index_map().to_owned()))
-                        //     .with_type(typename.to_string())
+                        FieldValue::from(res).with_type(typename.to_string())
                     });
 
                     Ok(Some(FieldValue::list(values)))
@@ -283,8 +210,7 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
         .finish()?;
 
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
-    // let sdl = schema.sdl();
-    // println!("BUILT SCHEMA: {}", sdl);
+
     if let Some(output) = output {
         std::fs::write(output, sdl).unwrap();
     }

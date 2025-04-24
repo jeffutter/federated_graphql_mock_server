@@ -1,18 +1,12 @@
 use async_graphql::{dynamic::*, Name, Value};
-use core::panic;
-use fake::{
-    faker::lorem::en::Words,
-    rand::{self, seq::IndexedRandom},
-    uuid::UUIDv4,
-    Fake,
-};
+use federated_graphql_mock_server::mock_graph::MockGraph;
 use futures_core::stream::Stream;
 use graphql_parser::schema::{
     EnumType, InputObjectType, InterfaceType, ObjectType, ScalarType, UnionType,
 };
 use indexmap::IndexMap;
-use std::{borrow::Borrow, collections::HashMap, pin::Pin, sync::Arc};
-use tracing::{instrument, trace, Level};
+use std::{borrow::Borrow, collections::HashMap, pin::Pin};
+use tracing::trace;
 
 const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values"];
 
@@ -52,410 +46,6 @@ fn map_type_to_typeref<'a>(ty: &graphql_parser::query::Type<'a, &'a str>) -> Typ
             TypeRef::NonNull(Box::new(map_type_to_typeref(inner)))
         }
     }
-}
-
-pub fn map_field_to_mock_field<'a>(
-    field: &graphql_parser::schema::Field<'a, &'a str>,
-) -> MockField {
-    use graphql_parser::query::Type;
-
-    let null = field.directives.iter().find(|d| d.name == "null");
-
-    let null_probability: f64 = null
-        .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "probability"))
-        .and_then(|(_, v)| match v {
-            graphql_parser::query::Value::Int(number) => number.as_i64().map(|x| x as f64),
-            graphql_parser::query::Value::Float(f) => Some(*f),
-            graphql_parser::query::Value::Null => Some(0.0),
-            _ => panic!(),
-        })
-        .unwrap_or(0.05);
-
-    match &field.field_type {
-        Type::NamedType(_) => MockField::Nullable(
-            1.0 - null_probability,
-            map_type_to_mock_contents(&field.field_type, &field.directives),
-        ),
-        Type::ListType(inner) => MockField::Nullable(
-            1.0 - null_probability,
-            map_type_to_mock_contents(&Type::ListType(inner.clone()), &field.directives),
-        ),
-        Type::NonNullType(inner) => {
-            MockField::NonNull(map_type_to_mock_contents(inner, &field.directives))
-        }
-    }
-}
-
-fn map_type_to_mock_contents<'a>(
-    ty: &graphql_parser::schema::Type<'a, &'a str>,
-    directives: &Vec<graphql_parser::schema::Directive<'a, &'a str>>,
-) -> MockContents {
-    use graphql_parser::query::Type;
-
-    match ty {
-        Type::NamedType(name) => match *name {
-            "String" => {
-                if let Some(values) = directives.iter().find(|d| d.name == "values") {
-                    let selection: Vec<String> = values
-                        .arguments
-                        .iter()
-                        .find(|(n, _)| *n == "select")
-                        .map(|(_, v)| match v {
-                            graphql_parser::query::Value::List(list) => list
-                                .iter()
-                                .map(|v| match v {
-                                    graphql_parser::query::Value::String(string) => string.clone(),
-                                    _ => panic!(),
-                                })
-                                .collect::<Vec<_>>(),
-                            _ => panic!(),
-                        })
-                        .unwrap();
-
-                    return MockContents::Type(Box::new(MockType::SelectString { selection }));
-                };
-
-                let words = directives.iter().find(|d| d.name == "words");
-
-                let word_count: Option<usize> = words
-                    .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "count"))
-                    .map(|(_, v)| match v {
-                        graphql_parser::query::Value::Int(number) => {
-                            number.as_i64().unwrap().try_into().unwrap()
-                        }
-                        graphql_parser::query::Value::Null => 0,
-                        _ => panic!(),
-                    });
-                let min: Option<usize> = words
-                    .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "min"))
-                    .map(|(_, v)| match v {
-                        graphql_parser::query::Value::Int(number) => {
-                            number.as_i64().unwrap().try_into().unwrap()
-                        }
-                        graphql_parser::query::Value::Null => 0,
-                        _ => panic!(),
-                    });
-                let max: Option<usize> = words
-                    .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "max"))
-                    .map(|(_, v)| match v {
-                        graphql_parser::query::Value::Int(number) => {
-                            number.as_i64().unwrap().try_into().unwrap()
-                        }
-                        graphql_parser::query::Value::Null => 0,
-                        _ => panic!(),
-                    });
-
-                let (min, max) = match (word_count, min, max) {
-                    (Some(n), _, _) => (n, n),
-                    (None, Some(min), Some(max)) => (min, max),
-                    (None, None, Some(max)) => (1, max),
-                    _ => (1, 1),
-                };
-
-                if max < min {
-                    panic!("Max: {max} is less than Min: {min}");
-                }
-
-                MockContents::Type(Box::new(MockType::RandomString { min, max }))
-            }
-            "Int" => MockContents::Type(Box::new(MockType::Int)),
-            "Float" => MockContents::Type(Box::new(MockType::Float)),
-            "Boolean" => MockContents::Type(Box::new(MockType::Boolean)),
-            "ID" => {
-                if let Some(values) = directives.iter().find(|d| d.name == "values") {
-                    let selection: Vec<String> = values
-                        .arguments
-                        .iter()
-                        .find(|(n, _)| *n == "select")
-                        .map(|(_, v)| match v {
-                            graphql_parser::query::Value::List(list) => list
-                                .iter()
-                                .map(|v| match v {
-                                    graphql_parser::query::Value::String(string) => string.clone(),
-                                    _ => panic!(),
-                                })
-                                .collect::<Vec<_>>(),
-                            _ => panic!(),
-                        })
-                        .unwrap();
-
-                    return MockContents::Type(Box::new(MockType::SelectID { selection }));
-                };
-                MockContents::Type(Box::new(MockType::ID))
-            }
-            s => MockContents::Type(Box::new(MockType::Ref(s.to_string()))),
-        },
-        Type::ListType(ref inner) => {
-            let list_length = directives.iter().find(|d| d.name == "listLength");
-            let min: usize = list_length
-                .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "min"))
-                .map(|(_, v)| match v {
-                    graphql_parser::query::Value::Int(number) => {
-                        number.as_i64().unwrap().try_into().unwrap()
-                    }
-                    graphql_parser::query::Value::Null => 0,
-                    _ => panic!(),
-                })
-                .unwrap_or(1);
-            let max: usize = list_length
-                .and_then(|d| d.arguments.iter().find(|(n, _)| *n == "max"))
-                .map(|(_, v)| match v {
-                    graphql_parser::query::Value::Int(number) => {
-                        number.as_i64().unwrap().try_into().unwrap()
-                    }
-                    graphql_parser::query::Value::Null => 10,
-                    _ => panic!(),
-                })
-                .unwrap_or(1);
-
-            if max < min {
-                panic!("Max: {max} is less than Min: {min}");
-            }
-
-            MockContents::List(Box::new(MockFieldList {
-                contents: map_type_to_mock_contents(inner, directives),
-                min,
-                max,
-            }))
-        }
-        Type::NonNullType(ref inner) => MockContents::Field(Box::new(MockField::NonNull(
-            map_type_to_mock_contents(inner, directives),
-        ))),
-    }
-}
-
-pub struct MockerBuilder {
-    data: HashMap<String, HashMap<String, MockField>>,
-    enums: HashMap<String, Vec<String>>,
-}
-
-impl MockerBuilder {
-    fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-            enums: HashMap::new(),
-        }
-    }
-    pub fn insert_obj(&mut self, obj_name: String, field_name: String, mock_fn: MockField) {
-        self.data
-            .entry(obj_name)
-            .and_modify(|hm| {
-                hm.insert(field_name.clone(), mock_fn.clone());
-            })
-            .or_insert_with(|| {
-                let mut hm = HashMap::new();
-                hm.insert(field_name.clone(), mock_fn.clone());
-                hm
-            });
-    }
-
-    pub fn insert_enum(&mut self, enum_name: String, values: Vec<String>) {
-        self.enums.insert(enum_name, values);
-    }
-
-    pub fn build(self) -> Mocker {
-        Mocker {
-            data: Arc::new(self.data),
-            enums: Arc::new(self.enums),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Mocker {
-    data: Arc<HashMap<String, HashMap<String, MockField>>>,
-    enums: Arc<HashMap<String, Vec<String>>>,
-}
-
-impl Mocker {
-    pub fn builder() -> MockerBuilder {
-        MockerBuilder::new()
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    fn _get_enum(&self, enum_name: String) -> async_graphql::Result<Option<Value>> {
-        match self.enums.get(&enum_name) {
-            Some(en) => {
-                let v = en.choose(&mut fake::rand::rng()).unwrap();
-                Ok(Some(Value::from(v)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    pub fn get_obj(&self, obj_name: String, field_name: String) -> FieldFuture<'_> {
-        trace!("Get Obj: {obj_name}.{field_name}");
-        FieldFuture::new(async move { self._get_obj(&obj_name, &field_name) })
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    fn get_obj_stream(&self, obj_name: String, field_name: String) -> SubscriptionFieldFuture<'_> {
-        SubscriptionFieldFuture::new(async move {
-            let stream = async_stream::stream! {
-                yield Ok(self._get_obj(&obj_name, &field_name).unwrap().unwrap());
-            };
-
-            Ok(stream)
-        })
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    pub fn get_whole_obj(&self, obj_name: &str) -> FieldValue {
-        let obj = self.data.get(obj_name);
-
-        match obj {
-            Some(obj) => {
-                let mocked = obj.iter().filter_map(|(f, mf)| {
-                    self._resolve_mock_field(mf.clone())
-                        .map(|v| v.map(|v| (Name::new(f), v)))
-                        .unwrap()
-                });
-
-                let map = IndexMap::from_iter(mocked);
-
-                FieldValue::from(Value::from(map))
-            }
-            None => FieldValue::NULL,
-        }
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    fn _get_obj(&self, obj_name: &str, field_name: &str) -> async_graphql::Result<Option<Value>> {
-        let field = self
-            .data
-            .get(obj_name)
-            .and_then(|hm| hm.get(field_name))
-            .cloned();
-
-        match field {
-            Some(mock_field) => self._resolve_mock_field(mock_field),
-            None => todo!("Obj: {obj_name}, Field: {field_name}"),
-        }
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    fn _resolve_mock_contents(
-        &self,
-        mock_contents: MockContents,
-    ) -> async_graphql::Result<Option<Value>> {
-        match mock_contents {
-            MockContents::Field(mock_field) => self._resolve_mock_field(*mock_field),
-            MockContents::List(mock_field_list) => {
-                let MockFieldList { contents, min, max } = *mock_field_list;
-
-                let n = fake::rand::random_range(min..=max);
-                trace!("List: {:?} - {}..{} = {}", contents, min, max, n);
-                let mut out = Vec::with_capacity(n);
-
-                for _ in 0..n {
-                    out.push(
-                        self._resolve_mock_contents(contents.clone())
-                            .unwrap()
-                            .unwrap(),
-                    );
-                }
-
-                Ok(Some(Value::from(out)))
-            }
-            MockContents::Type(ty) => match *ty {
-                MockType::SelectString { selection } => Ok(Some(Value::from(
-                    selection.choose(&mut rand::rng()).unwrap(),
-                ))),
-                MockType::RandomString { min, max } => Ok(Some(Value::from(
-                    Words(min..max + 1).fake::<Vec<String>>().join(" "),
-                ))),
-                MockType::Int => Ok(Some(Value::from((1..1000).fake::<i32>()))),
-                MockType::Float => Ok(Some(Value::from((1.0..1000.0).fake::<f64>()))),
-                MockType::Boolean => Ok(Some(Value::from(true))),
-                MockType::ID => Ok(Some(Value::from(UUIDv4.fake::<String>()))),
-                MockType::SelectID { selection } => Ok(Some(Value::from(
-                    selection.choose(&mut rand::rng()).unwrap(),
-                ))),
-                MockType::Ref(obj_name) => {
-                    // Ref might be to an enum type
-                    if let Some(val) = self._get_enum(obj_name.clone()).unwrap() {
-                        return Ok(Some(val));
-                    }
-
-                    // println!("Data: {:#?}", self.data);
-
-                    let mut res: IndexMap<Name, Value> = IndexMap::new();
-                    let keys = self
-                        .data
-                        .get(&obj_name)
-                        .inspect(|x| trace!("Get: {:?}", x))
-                        .map(|hm| hm.keys())
-                        .unwrap_or_default();
-
-                    trace!("Ref({obj_name}) Keys: {:?}", keys);
-
-                    for k in keys {
-                        if let Some(v) = self._get_obj(&obj_name, k).unwrap() {
-                            res.insert(Name::new(k), v.clone());
-                        }
-                    }
-
-                    Ok(Some(Value::from(res)))
-
-                    // Return an empty object, the resolvers on the fields will fill the object out
-                    // Ok(Some(Value::from(IndexMap::new())))
-                }
-            },
-        }
-    }
-
-    #[instrument(level = Level::TRACE, skip(self))]
-    fn _resolve_mock_field(&self, mock_field: MockField) -> async_graphql::Result<Option<Value>> {
-        match mock_field {
-            MockField::NonNull(mock_contents) => {
-                trace!("Not Null");
-                self._resolve_mock_contents(mock_contents)
-            }
-            MockField::Nullable(null_probability, mock_contents) => {
-                if !rand::random_bool(null_probability) {
-                    trace!("Null");
-                    return Ok(None);
-                }
-
-                trace!("Not Null");
-
-                self._resolve_mock_contents(mock_contents)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum MockField {
-    NonNull(MockContents),
-    Nullable(f64, MockContents),
-}
-
-#[derive(Clone, Debug)]
-pub enum MockContents {
-    Field(Box<MockField>),
-    Type(Box<MockType>),
-    List(Box<MockFieldList>),
-}
-
-#[derive(Clone, Debug)]
-pub enum MockType {
-    SelectString { selection: Vec<String> },
-    RandomString { min: usize, max: usize },
-    Int,
-    Float,
-    Boolean,
-    ID,
-    SelectID { selection: Vec<String> },
-    Ref(String),
-}
-
-#[derive(Clone, Debug)]
-pub struct MockFieldList {
-    contents: MockContents,
-    min: usize,
-    max: usize,
 }
 
 pub fn register_scalar<'a>(
@@ -658,9 +248,20 @@ pub fn register_subscription_object<'a>(
                             }
                         }
 
-                        ctx.data::<Mocker>()
-                            .unwrap()
-                            .get_obj_stream(source_object_name, field_name)
+                        // ctx.data::<Mocker>()
+                        //     .unwrap()
+                        //     .get_obj_stream(source_object_name, field_name)
+
+
+                        SubscriptionFieldFuture::new(async move {
+                            let stream = async_stream::stream! {
+                                let res = ctx.data::<MockGraph>().unwrap().resolve_field(&source_object_name, &field_name).unwrap();
+                                yield Ok(res);
+                            };
+
+                            Ok(stream)
+                        })
+
                     });
 
                 // Subscription Fields can't have directives
@@ -759,9 +360,12 @@ pub fn register_object<'a>(
                     }
                 }
 
-                ctx.data::<Mocker>()
-                    .unwrap()
-                    .get_obj(source_object_name, field_name)
+                FieldFuture::new(async move {
+                    Ok(ctx
+                        .data::<MockGraph>()
+                        .unwrap()
+                        .resolve_field(&source_object_name, &field_name))
+                })
             });
 
             let field = source_field
