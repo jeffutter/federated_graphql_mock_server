@@ -102,7 +102,36 @@ pub fn register_interface<'a>(
 
     schema.register(source_interface.fields.iter().fold(i, |i, source_field| {
         let field_type = map_type_to_typeref(&source_field.field_type);
-        i.field(InterfaceField::new(source_field.name, field_type))
+
+        let field = InterfaceField::new(source_field.name, field_type);
+
+        let field = source_field
+            .arguments
+            .clone()
+            .into_iter()
+            .fold(field, |f, source_argument| {
+                let argument = InputValue::new(
+                    source_argument.name,
+                    map_type_to_typeref(&source_argument.value_type),
+                );
+                let argument = source_argument
+                    .directives
+                    .into_iter()
+                    .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+                    .fold(argument, |a, source_directive| {
+                        let d = source_directive.arguments.into_iter().fold(
+                            Directive::new(source_directive.name),
+                            |d, (k, v)| {
+                                let v = parser_value_to_query_value(v);
+                                d.argument(k, v)
+                            },
+                        );
+                        a.directive(d)
+                    });
+                f.argument(argument)
+            });
+
+        i.field(field)
     }))
 }
 
@@ -367,6 +396,31 @@ pub fn register_object<'a>(
                         .resolve_field(&source_object_name, &field_name))
                 })
             });
+
+            let field = source_field
+                .arguments
+                .into_iter()
+                .fold(field, |f, source_argument| {
+                    let argument = InputValue::new(
+                        source_argument.name,
+                        map_type_to_typeref(&source_argument.value_type),
+                    );
+                    let argument = source_argument
+                        .directives
+                        .into_iter()
+                        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+                        .fold(argument, |a, source_directive| {
+                            let d = source_directive.arguments.into_iter().fold(
+                                Directive::new(source_directive.name),
+                                |d, (k, v)| {
+                                    let v = parser_value_to_query_value(v);
+                                    d.argument(k, v)
+                                },
+                            );
+                            a.directive(d)
+                        });
+                    f.argument(argument)
+                });
 
             let field = source_field
                 .directives
