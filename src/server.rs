@@ -114,7 +114,6 @@ fn build_handler(path: &PathBuf, output: &Option<PathBuf>) -> anyhow::Result<Gra
 
 fn _build_handler(sdl_str: String) -> anyhow::Result<(String, GraphQL<Schema>)> {
     let sdl: Document<&str> = graphql_parser::parse_schema(&sdl_str)?;
-    let mock_graph = MockGraph::builder().process_document(&sdl).build();
 
     let root_query_name = sdl
         .definitions
@@ -135,6 +134,14 @@ fn _build_handler(sdl_str: String) -> anyhow::Result<(String, GraphQL<Schema>)> 
         _ => None,
     });
 
+    let mock_graph = MockGraph::builder(
+        root_query_name.to_string(),
+        mutation_query_name.map(|x| x.to_string()),
+        subscription_query_name.map(|x| x.to_string()),
+    )
+    .process_document(&sdl)
+    .build();
+
     let schema = sdl
         .definitions
         .clone()
@@ -149,6 +156,9 @@ fn _build_handler(sdl_str: String) -> anyhow::Result<(String, GraphQL<Schema>)> 
                             schema::register_scalar(schema, source_scalar)
                         }
                         TypeDefinition::Object(source_object) => {
+                            // We need to force rename the root query to "Query" as async-graphql
+                            // won't output the query/mutation/subscription object mapping with `federation`
+                            // https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
                             let source_object = if source_object.name == root_query_name {
                                 let mut source_object = source_object.clone();
                                 source_object.name = "Query";
@@ -327,5 +337,64 @@ mod tests {
                 assert!(b.get("id").is_some());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_nonstandard_root_type() {
+        let schema = r#"
+        schema @link(
+            url: "https://specs.apollo.dev/federation/v2.7"
+            import: ["@key"]
+        ) {
+          query: QueryType
+        }
+
+        type QueryType {
+          user: User
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+        }
+        "#;
+
+        // Build the handler with our test schema
+        let (_, mut graphql) = _build_handler(schema.to_string()).expect("Failed to build handler");
+
+        // Create an entity query that requests User with its A and B fields
+        let query = r#"
+          query() {
+            user {
+              id
+            }
+          }
+        "#;
+
+        // Create the variables with a representation for a User entity
+        let request = json!({
+            "query": query,
+            "variables": {}
+        });
+
+        // Create the GraphQL request
+        // let request = GraphQLRequest::new(query.to_string(), Some("".to_string()), Some(variables));
+        let http_request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("content-type", "application/json")
+            .body(serde_json::to_string(&request).unwrap())
+            .unwrap();
+
+        // Execute the query
+        let response = graphql.call(http_request).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 2048)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        // Verify the response contains the expected structure
+        assert!(json.get("data").is_some());
+        let user = json["data"]["user"].as_object().unwrap();
+        assert!(user.get("id").is_some());
     }
 }

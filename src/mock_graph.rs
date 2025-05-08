@@ -121,6 +121,12 @@ impl ResolutionPath {
 
 /// Builder for constructing a MockGraph
 pub struct MockGraphBuilder {
+    /// Name of the Query object in the source schema
+    /// Needed because we have to force this to "Query" to satisfy:
+    /// https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
+    source_query_name: String,
+    source_mutation_name: Option<String>,
+    source_subscription_name: Option<String>,
     /// Maps object names to their field configurations
     objects: HashMap<String, HashMap<String, MockFieldConfig>>,
     /// Maps enum names to their possible values
@@ -137,7 +143,11 @@ pub struct MockGraphBuilder {
 
 impl MockGraphBuilder {
     /// Create a new MockGraphBuilder
-    pub fn new() -> Self {
+    pub fn new(
+        source_query_name: String,
+        source_mutation_name: Option<String>,
+        source_subscription_name: Option<String>,
+    ) -> Self {
         Self {
             objects: HashMap::new(),
             enums: HashMap::new(),
@@ -145,6 +155,9 @@ impl MockGraphBuilder {
             unions: HashMap::new(),
             interface_fields: HashMap::new(),
             implementers: HashMap::new(),
+            source_query_name,
+            source_mutation_name,
+            source_subscription_name,
         }
     }
 
@@ -211,7 +224,13 @@ impl MockGraphBuilder {
 
     /// Process an object type definition
     fn process_object<'a>(&mut self, obj_type: &ObjectType<'a, &'a str>) {
-        let obj_name = obj_type.name.to_string();
+        let obj_name = match obj_type.name {
+            x if x == self.source_query_name => "Query",
+            x if Some(x) == self.source_mutation_name.as_deref() => "Mutation",
+            x if Some(x) == self.source_subscription_name.as_deref() => "Subscription",
+            x => x,
+        }
+        .to_string();
         let mut fields = HashMap::new();
 
         // Process object fields
@@ -407,16 +426,18 @@ impl MockGraphBuilder {
     }
 }
 
-impl Default for MockGraphBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MockGraph {
     /// Create a new MockGraphBuilder
-    pub fn builder() -> MockGraphBuilder {
-        MockGraphBuilder::new()
+    pub fn builder(
+        source_query_name: String,
+        source_mutation_name: Option<String>,
+        source_subscription_name: Option<String>,
+    ) -> MockGraphBuilder {
+        MockGraphBuilder::new(
+            source_query_name,
+            source_mutation_name,
+            source_subscription_name,
+        )
     }
 
     /// Resolve a field for a given object type
@@ -702,7 +723,9 @@ mod tests {
         "#;
 
         let doc = parse_schema::<&str>(schema).unwrap();
-        let mock_graph = MockGraph::builder().process_document(&doc).build();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .process_document(&doc)
+            .build();
 
         // Test resolving fields
         let user_name = mock_graph.resolve_field("User", "name");
