@@ -36,7 +36,7 @@
         pkgs = import nixpkgs { inherit system overlays; };
 
         lib = nixpkgs.lib;
-        craneLib = crane.lib.${system};
+        craneLib = crane.mkLib pkgs;
 
         src = lib.cleanSourceWith { src = craneLib.path ./.; };
 
@@ -56,6 +56,7 @@
                 cargo
                 rust-analyzer
                 rustc
+                clang
               ]
               ++ lib.optionals stdenv.isDarwin [ libiconv ];
           }
