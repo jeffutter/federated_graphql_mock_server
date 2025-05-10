@@ -70,6 +70,8 @@ pub enum MockTypeConfig {
     InterfaceRef(String),
     /// Reference to a union
     UnionRef(String),
+    /// Union Type selected from a predefined list
+    SelectRef { selection: Vec<String> },
 }
 
 /// Main struct for resolving mock GraphQL data
@@ -326,7 +328,11 @@ impl MockGraphBuilder {
                 } else if self.interfaces.contains_key(type_name) {
                     MockTypeConfig::InterfaceRef(type_name.to_string())
                 } else if self.unions.contains_key(type_name) {
-                    MockTypeConfig::UnionRef(type_name.to_string())
+                    if let Some(selection) = self.get_select_directive(directives) {
+                        MockTypeConfig::SelectRef { selection }
+                    } else {
+                        MockTypeConfig::UnionRef(type_name.to_string())
+                    }
                 } else {
                     // Assume it's an object reference
                     MockTypeConfig::Ref(type_name.to_string())
@@ -452,11 +458,10 @@ impl MockGraph {
         field_name: &str,
         path: &mut ResolutionPath,
     ) -> Option<FieldValue> {
-        trace!("Resolving field: {}.{}", obj_type, field_name);
-
-        // Check if it's an interface
         if self.interfaces.contains_key(obj_type) {
             return self.resolve_interface_field_with_path(obj_type, field_name, path);
+        } else if self.unions.contains_key(obj_type) {
+            return self.resolve_union_obj_with_path(obj_type, path);
         }
 
         // Otherwise, resolve as a regular object field
@@ -494,7 +499,7 @@ impl MockGraph {
         obj_type: &str,
         path: &mut ResolutionPath,
     ) -> Option<FieldValue> {
-        trace!("Resolving object: {}", obj_type);
+        // trace!("Resolving object: {}", obj_type);
 
         // Check for cycles - if we can't push this type, it would create a cycle
         if !path.push(obj_type) {
@@ -514,30 +519,9 @@ impl MockGraph {
                 let mut path_clone = path.clone();
                 self.resolve_union_obj_with_path(obj_type, &mut path_clone)
             } else {
-                // Otherwise, resolve as a regular object
-                let obj_fields = match self.objects.get(obj_type) {
-                    Some(fields) => fields,
-                    None => {
-                        path.pop();
-                        return None;
-                    }
-                };
-
-                let mut result = IndexMap::new();
-
-                for (field_name, field_config) in obj_fields {
-                    // Clone the path for each field resolution
-                    let mut path_clone = path.clone();
-                    if let Some(value) =
-                        self.resolve_field_config_with_path(field_config, &mut path_clone)
-                    {
-                        if let Some(const_value) = value.as_value() {
-                            result.insert(Name::new(field_name), const_value.clone());
-                        }
-                    }
-                }
-
-                Some(FieldValue::value(ConstValue::Object(result)))
+                // This can be an empty object, all the fields will be resolved as the resolvers
+                // are called for each field
+                Some(FieldValue::value(ConstValue::Object(IndexMap::new())))
             }
         };
 
@@ -624,13 +608,11 @@ impl MockGraph {
                     if let Some(value) =
                         self.resolve_content_config_with_path(&list_config.contents, path)
                     {
-                        if let Some(const_value) = value.as_value() {
-                            values.push(const_value.clone());
-                        }
+                        values.push(value);
                     }
                 }
 
-                Some(FieldValue::value(ConstValue::List(values)))
+                Some(values.into())
             }
         }
     }
@@ -681,6 +663,12 @@ impl MockGraph {
             }
             MockTypeConfig::UnionRef(union_name) => {
                 self.resolve_union_obj_with_path(union_name, path)
+            }
+            MockTypeConfig::SelectRef { selection } => {
+                selection.choose(&mut rand::rng()).and_then(|s| {
+                    self.resolve_obj_with_path(s, path)
+                        .map(|v| v.with_type(s.to_string()))
+                })
             }
         }
     }

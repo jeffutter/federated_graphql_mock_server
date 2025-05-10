@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use std::{borrow::Borrow, collections::HashMap, pin::Pin};
 use tracing::trace;
 
-const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values"];
+const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values", "select"];
 
 fn parser_value_to_query_value<'a>(
     v: impl Borrow<graphql_parser::query::Value<'a, &'a str>>,
