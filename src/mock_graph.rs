@@ -11,7 +11,6 @@ use graphql_parser::schema::{
 };
 use indexmap::IndexMap;
 use rand::prelude::IndexedRandom;
-use tracing::trace;
 use uuid::Uuid;
 
 /// Represents a field in a GraphQL schema with its mock configuration
@@ -84,41 +83,6 @@ pub struct MockGraph {
     interfaces: Arc<HashMap<String, Vec<String>>>,
     /// Maps union names to possible types
     unions: Arc<HashMap<String, Vec<String>>>,
-}
-
-/// Tracks the resolution path to detect cycles
-#[derive(Debug, Clone, Default)]
-struct ResolutionPath {
-    /// Stack of object types being resolved
-    path: Vec<String>,
-}
-
-impl ResolutionPath {
-    /// Create a new empty resolution path
-    fn new() -> Self {
-        Self { path: Vec::new() }
-    }
-
-    /// Push an object type to the resolution path
-    fn push(&mut self, obj_type: &str) -> bool {
-        // Check if this would create a cycle
-        if self.path.contains(&obj_type.to_string()) {
-            trace!(
-                "Cycle detected in resolution path: {:?} -> {}",
-                self.path,
-                obj_type
-            );
-            return false;
-        }
-
-        self.path.push(obj_type.to_string());
-        true
-    }
-
-    /// Pop the last object type from the resolution path
-    fn pop(&mut self) {
-        self.path.pop();
-    }
 }
 
 /// Builder for constructing a MockGraph
@@ -448,35 +412,24 @@ impl MockGraph {
 
     /// Resolve a field for a given object type
     pub fn resolve_field(&self, obj_type: &str, field_name: &str) -> Option<FieldValue> {
-        self.resolve_field_with_path(obj_type, field_name, &mut ResolutionPath::new())
-    }
-
-    /// Resolve a field with path tracking
-    fn resolve_field_with_path(
-        &self,
-        obj_type: &str,
-        field_name: &str,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
         if self.interfaces.contains_key(obj_type) {
-            return self.resolve_interface_field_with_path(obj_type, field_name, path);
+            return self.resolve_interface_field(obj_type, field_name);
         } else if self.unions.contains_key(obj_type) {
-            return self.resolve_union_obj_with_path(obj_type, path);
+            return self.resolve_union_obj(obj_type);
         }
 
         // Otherwise, resolve as a regular object field
         let obj_fields = self.objects.get(obj_type)?;
         let field_config = obj_fields.get(field_name)?;
 
-        self.resolve_field_config_with_path(field_config, path)
+        self.resolve_field_config(field_config)
     }
 
-    /// Resolve a field for an interface type with path tracking
-    fn resolve_interface_field_with_path(
+    /// Resolve a field for an interface type
+    fn resolve_interface_field(
         &self,
         interface_type: &str,
         field_name: &str,
-        path: &mut ResolutionPath,
     ) -> Option<FieldValue> {
         // Get a random implementing type
         let implementers = self.interfaces.get(interface_type)?;
@@ -485,39 +438,22 @@ impl MockGraph {
         }
 
         let random_type = implementers.choose(&mut rand::rng())?;
-        self.resolve_field_with_path(random_type, field_name, path)
+        self.resolve_field(random_type, field_name)
     }
 
     /// Resolve a complete object
     pub fn resolve_obj(&self, obj_type: &str) -> Option<FieldValue> {
-        self.resolve_obj_with_path(obj_type, &mut ResolutionPath::new())
-    }
-
-    /// Resolve a complete object with path tracking to prevent cycles
-    fn resolve_obj_with_path(
-        &self,
-        obj_type: &str,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
         // trace!("Resolving object: {}", obj_type);
-
-        // Check for cycles - if we can't push this type, it would create a cycle
-        if !path.push(obj_type) {
-            trace!("Cycle detected, returning null for {}", obj_type);
-            return None;
-        }
 
         // Pop the path when we're done with this object
         let result = {
             // Check if it's an interface or union
             if self.interfaces.contains_key(obj_type) {
                 // Clone the path for the recursive call
-                let mut path_clone = path.clone();
-                self.resolve_interface_obj_with_path(obj_type, &mut path_clone)
+                self.resolve_interface_obj(obj_type)
             } else if self.unions.contains_key(obj_type) {
                 // Clone the path for the recursive call
-                let mut path_clone = path.clone();
-                self.resolve_union_obj_with_path(obj_type, &mut path_clone)
+                self.resolve_union_obj(obj_type)
             } else {
                 // This can be an empty object, all the fields will be resolved as the resolvers
                 // are called for each field
@@ -525,89 +461,61 @@ impl MockGraph {
             }
         };
 
-        // Pop from the path before returning
-        path.pop();
         result
     }
 
-    /// Resolve an interface with path tracking
-    fn resolve_interface_obj_with_path(
-        &self,
-        interface_type: &str,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
+    /// Resolve an interface
+    fn resolve_interface_obj(&self, interface_type: &str) -> Option<FieldValue> {
         let implementers = self.interfaces.get(interface_type)?;
         if implementers.is_empty() {
             return None;
         }
 
         let random_type = implementers.choose(&mut rand::rng())?;
-        let value = self.resolve_obj_with_path(random_type, path)?;
-
-        // Use WithType to specify the concrete type
-        Some(FieldValue::with_type(value, random_type.to_string()))
+        let value = self.resolve_obj(random_type)?;
+        Some(value.with_type(random_type.to_string()))
     }
 
-    /// Resolve a union with path tracking
-    fn resolve_union_obj_with_path(
-        &self,
-        union_type: &str,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
+    /// Resolve a union
+    fn resolve_union_obj(&self, union_type: &str) -> Option<FieldValue> {
         let member_types = self.unions.get(union_type)?;
         if member_types.is_empty() {
             return None;
         }
 
         let random_type = member_types.choose(&mut rand::rng())?;
-        let value = self.resolve_obj_with_path(random_type, path)?;
+        let value = self.resolve_obj(random_type)?;
 
         // Use WithType to specify the concrete type
         Some(FieldValue::with_type(value, random_type.to_string()))
     }
 
-    /// Resolve a field configuration with path tracking
-    fn resolve_field_config_with_path(
-        &self,
-        config: &MockFieldConfig,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
+    /// Resolve a field configuration
+    fn resolve_field_config(&self, config: &MockFieldConfig) -> Option<FieldValue> {
         match config {
-            MockFieldConfig::NonNull(content) => {
-                self.resolve_content_config_with_path(content, path)
-            }
+            MockFieldConfig::NonNull(content) => self.resolve_content_config(content),
             MockFieldConfig::Nullable(null_prob, content) => {
                 if rand::random::<f64>() < *null_prob {
                     None
                 } else {
-                    self.resolve_content_config_with_path(content, path)
+                    self.resolve_content_config(content)
                 }
             }
         }
     }
 
-    /// Resolve content configuration with path tracking
-    fn resolve_content_config_with_path(
-        &self,
-        config: &MockContentConfig,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
+    /// Resolve content configuration
+    fn resolve_content_config(&self, config: &MockContentConfig) -> Option<FieldValue> {
         match config {
-            MockContentConfig::Field(field_config) => {
-                self.resolve_field_config_with_path(field_config, path)
-            }
-            MockContentConfig::Type(type_config) => {
-                self.resolve_type_config_with_path(type_config, path)
-            }
+            MockContentConfig::Field(field_config) => self.resolve_field_config(field_config),
+            MockContentConfig::Type(type_config) => self.resolve_type_config(type_config),
             MockContentConfig::List(list_config) => {
                 let count =
                     rand::Rng::random_range(&mut rand::rng(), list_config.min..=list_config.max);
                 let mut values = Vec::with_capacity(count);
 
                 for _ in 0..count {
-                    if let Some(value) =
-                        self.resolve_content_config_with_path(&list_config.contents, path)
-                    {
+                    if let Some(value) = self.resolve_content_config(&list_config.contents) {
                         values.push(value);
                     }
                 }
@@ -617,12 +525,8 @@ impl MockGraph {
         }
     }
 
-    /// Resolve type configuration with path tracking
-    fn resolve_type_config_with_path(
-        &self,
-        config: &MockTypeConfig,
-        path: &mut ResolutionPath,
-    ) -> Option<FieldValue> {
+    /// Resolve type configuration
+    fn resolve_type_config(&self, config: &MockTypeConfig) -> Option<FieldValue> {
         match config {
             MockTypeConfig::RandomString { min, max } => {
                 let words: String = Words(*min..*max + 1).fake::<Vec<String>>().join(" ");
@@ -651,7 +555,7 @@ impl MockGraph {
             MockTypeConfig::SelectID { selection } => selection
                 .choose(&mut rand::rng())
                 .map(|s| FieldValue::value(ConstValue::String(s.clone()))),
-            MockTypeConfig::Ref(type_name) => self.resolve_obj_with_path(type_name, path),
+            MockTypeConfig::Ref(type_name) => self.resolve_obj(type_name),
             MockTypeConfig::EnumRef(enum_name) => {
                 let values = self.enums.get(enum_name)?;
                 values
@@ -659,17 +563,12 @@ impl MockGraph {
                     .map(|v| FieldValue::value(ConstValue::Enum(Name::new(v))))
             }
             MockTypeConfig::InterfaceRef(interface_name) => {
-                self.resolve_interface_obj_with_path(interface_name, path)
+                self.resolve_interface_obj(interface_name)
             }
-            MockTypeConfig::UnionRef(union_name) => {
-                self.resolve_union_obj_with_path(union_name, path)
-            }
-            MockTypeConfig::SelectRef { selection } => {
-                selection.choose(&mut rand::rng()).and_then(|s| {
-                    self.resolve_obj_with_path(s, path)
-                        .map(|v| v.with_type(s.to_string()))
-                })
-            }
+            MockTypeConfig::UnionRef(union_name) => self.resolve_union_obj(union_name),
+            MockTypeConfig::SelectRef { selection } => selection
+                .choose(&mut rand::rng())
+                .and_then(|s| self.resolve_obj(s).map(|v| v.with_type(s.to_string()))),
         }
     }
 }
