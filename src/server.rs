@@ -139,7 +139,7 @@ fn _build_handler(sdl_str: String) -> anyhow::Result<(String, GraphQL<Schema>)> 
         mutation_query_name.map(|x| x.to_string()),
         subscription_query_name.map(|x| x.to_string()),
     )
-    .process_document(&sdl)
+    .register_document(&sdl)
     .build();
 
     let schema = sdl

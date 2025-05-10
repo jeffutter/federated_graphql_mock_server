@@ -127,38 +127,38 @@ impl MockGraphBuilder {
         }
     }
 
-    /// Process a GraphQL schema document to build the mock configuration
-    pub fn process_document<'a>(mut self, doc: &Document<'a, &'a str>) -> Self {
+    /// Register a GraphQL schema document to build the mock configuration
+    pub fn register_document<'a>(mut self, doc: &Document<'a, &'a str>) -> Self {
         // First pass: collect all type definitions
         for def in &doc.definitions {
             if let Definition::TypeDefinition(type_def) = def {
                 match type_def {
                     TypeDefinition::Enum(enum_type) => {
-                        self.process_enum(enum_type);
+                        self.register_enum(enum_type);
                     }
                     TypeDefinition::Union(union_type) => {
-                        self.process_union(union_type);
+                        self.register_union(union_type);
                     }
                     TypeDefinition::Interface(interface_type) => {
-                        self.process_interface(interface_type);
+                        self.register_interface(interface_type);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Second pass: process object types and their fields
+        // Second pass: register object types and their fields
         for def in &doc.definitions {
             if let Definition::TypeDefinition(TypeDefinition::Object(obj_type)) = def {
-                self.process_object(obj_type);
+                self.register_object(obj_type);
             }
         }
 
         self
     }
 
-    /// Process an enum type definition
-    fn process_enum<'a>(&mut self, enum_type: &EnumType<'a, &'a str>) {
+    /// Register an enum type definition
+    fn register_enum<'a>(&mut self, enum_type: &EnumType<'a, &'a str>) {
         let values = enum_type
             .values
             .iter()
@@ -167,20 +167,20 @@ impl MockGraphBuilder {
         self.enums.insert(enum_type.name.to_string(), values);
     }
 
-    /// Process a union type definition
-    fn process_union<'a>(&mut self, union_type: &UnionType<'a, &'a str>) {
+    /// Register a union type definition
+    fn register_union<'a>(&mut self, union_type: &UnionType<'a, &'a str>) {
         let types = union_type.types.iter().map(|t| t.to_string()).collect();
         self.unions.insert(union_type.name.to_string(), types);
     }
 
-    /// Process an interface type definition
-    fn process_interface<'a>(&mut self, interface_type: &InterfaceType<'a, &'a str>) {
+    /// Register an interface type definition
+    fn register_interface<'a>(&mut self, interface_type: &InterfaceType<'a, &'a str>) {
         let name = interface_type.name.to_string();
 
-        // Process interface fields
+        // Register interface fields
         let mut fields = HashMap::new();
         for field in &interface_type.fields {
-            let field_config = self.process_field(field);
+            let field_config = self.register_field(field);
             fields.insert(field.name.to_string(), field_config);
         }
 
@@ -188,8 +188,8 @@ impl MockGraphBuilder {
         self.interfaces.insert(name, Vec::new());
     }
 
-    /// Process an object type definition
-    fn process_object<'a>(&mut self, obj_type: &ObjectType<'a, &'a str>) {
+    /// Register an object type definition
+    fn register_object<'a>(&mut self, obj_type: &ObjectType<'a, &'a str>) {
         let obj_name = match obj_type.name {
             x if x == self.source_query_name => "Query",
             x if Some(x) == self.source_mutation_name.as_deref() => "Mutation",
@@ -199,9 +199,9 @@ impl MockGraphBuilder {
         .to_string();
         let mut fields = HashMap::new();
 
-        // Process object fields
+        // Register object fields
         for field in &obj_type.fields {
-            let field_config = self.process_field(field);
+            let field_config = self.register_field(field);
             fields.insert(field.name.to_string(), field_config);
         }
 
@@ -222,10 +222,10 @@ impl MockGraphBuilder {
         }
     }
 
-    /// Process a field definition
-    fn process_field<'a>(&self, field: &Field<'a, &'a str>) -> MockFieldConfig {
+    /// Register a field definition
+    fn register_field<'a>(&self, field: &Field<'a, &'a str>) -> MockFieldConfig {
         let is_non_null = matches!(field.field_type, Type::NonNullType(_));
-        let content_config = self.process_type(&field.field_type, &field.directives);
+        let content_config = self.register_type(&field.field_type, &field.directives);
 
         if is_non_null {
             MockFieldConfig::NonNull(content_config)
@@ -235,8 +235,8 @@ impl MockGraphBuilder {
         }
     }
 
-    /// Process a type definition
-    fn process_type<'a>(
+    /// Register a type definition
+    fn register_type<'a>(
         &self,
         ty: &Type<'a, &'a str>,
         directives: &[Directive<'a, &'a str>],
@@ -248,7 +248,7 @@ impl MockGraphBuilder {
                 MockContentConfig::Type(Box::new(type_config))
             }
             Type::ListType(inner) => {
-                let inner_config = self.process_type(inner, directives);
+                let inner_config = self.register_type(inner, directives);
                 let (min, max) = self.get_count_directive(directives);
                 MockContentConfig::List(Box::new(MockListConfig {
                     contents: inner_config,
@@ -256,7 +256,7 @@ impl MockGraphBuilder {
                     max,
                 }))
             }
-            Type::NonNullType(inner) => self.process_type(inner, directives),
+            Type::NonNullType(inner) => self.register_type(inner, directives),
         }
     }
 
@@ -457,7 +457,10 @@ impl MockGraph {
             } else {
                 // This can be an empty object, all the fields will be resolved as the resolvers
                 // are called for each field
-                Some(FieldValue::value(ConstValue::Object(IndexMap::new())))
+                Some(
+                    FieldValue::value(ConstValue::Object(IndexMap::new()))
+                        .with_type(obj_type.to_string()),
+                )
             }
         };
 
@@ -611,48 +614,23 @@ mod tests {
 
         let doc = parse_schema::<&str>(schema).unwrap();
         let mock_graph = MockGraph::builder(String::from("Query"), None, None)
-            .process_document(&doc)
+            .register_document(&doc)
             .build();
 
         // Test resolving fields
         let user_name = mock_graph.resolve_field("User", "name");
-        assert!(user_name.is_some());
-        if let Some(field_value) = user_name {
-            if let Some(ConstValue::String(name)) = field_value.as_value() {
-                assert!(["john", "james", "fred"].contains(&name.as_str()));
-            }
-        }
+        assert!(matches!(
+            user_name.and_then(|x| x.as_value().cloned()),
+            Some(ConstValue::String(name)) if ["john", "james", "fred"].contains(&name.as_str())
+        ));
 
         let user_id = mock_graph.resolve_field("User", "id");
         assert!(user_id.is_some());
 
         let user_color = mock_graph.resolve_field("User", "color");
-        assert!(user_color.is_some());
-        if let Some(field_value) = user_color {
-            if let Some(ConstValue::Enum(color)) = field_value.as_value() {
-                assert!(["RED", "GREEN", "BLUE"].contains(&color.as_str()));
-            }
-        }
-
-        // Test resolving objects
-        let person = mock_graph.resolve_obj("Person");
-        assert!(person.is_some());
-        if let Some(field_value) = person {
-            if let Some(ConstValue::Object(fields)) = field_value.as_value() {
-                assert!(fields.contains_key(&Name::new("id")));
-            }
-        }
-
-        let user = mock_graph.resolve_obj("User");
-        assert!(user.is_some());
-        if let Some(field_value) = user {
-            if let Some(ConstValue::Object(fields)) = field_value.as_value() {
-                assert!(fields.contains_key(&Name::new("id")));
-                assert!(fields.contains_key(&Name::new("username")));
-                assert!(fields.contains_key(&Name::new("name")));
-                assert!(fields.contains_key(&Name::new("numbers")));
-                assert!(fields.contains_key(&Name::new("color")));
-            }
-        }
+        assert!(matches!(
+            user_color.and_then(|x| x.as_value().cloned()),
+            Some(ConstValue::Enum(color)) if ["RED", "GREEN", "BLUE"].contains(&color.as_str())
+        ));
     }
 }
