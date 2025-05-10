@@ -124,8 +124,8 @@ impl ResolutionPath {
 /// Builder for constructing a MockGraph
 pub struct MockGraphBuilder {
     /// Name of the Query object in the source schema
-    /// Needed because we have to force this to "Query" to satisfy:
-    /// https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
+    // Needed because we have to force this to "Query" to satisfy:
+    // https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
     source_query_name: String,
     source_mutation_name: Option<String>,
     source_subscription_name: Option<String>,

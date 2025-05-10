@@ -131,6 +131,7 @@ checksum = "71938f30533e4d95a6d17aa530939da3842c2ab6f4f84b9dae68447e4129f74a"
 [[package]]
 name = "async-graphql"
 version = "7.0.16"
+source = "git+https://github.com/jeffutter/async-graphql.git?branch=allow-dynamic-schema-subtypes#f1a36ab42788447956f9844389f2156d911dd22b"
 dependencies = [
  "async-graphql-derive",
  "async-graphql-parser",
@@ -164,6 +165,7 @@ dependencies = [
 [[package]]
 name = "async-graphql-axum"
 version = "7.0.16"
+source = "git+https://github.com/jeffutter/async-graphql.git?branch=allow-dynamic-schema-subtypes#f1a36ab42788447956f9844389f2156d911dd22b"
 dependencies = [
  "async-graphql",
  "axum",
@@ -179,6 +181,7 @@ dependencies = [
 [[package]]
 name = "async-graphql-derive"
 version = "7.0.16"
+source = "git+https://github.com/jeffutter/async-graphql.git?branch=allow-dynamic-schema-subtypes#f1a36ab42788447956f9844389f2156d911dd22b"
 dependencies = [
  "Inflector",
  "async-graphql-parser",
@@ -194,6 +197,7 @@ dependencies = [
 [[package]]
 name = "async-graphql-parser"
 version = "7.0.16"
+source = "git+https://github.com/jeffutter/async-graphql.git?branch=allow-dynamic-schema-subtypes#f1a36ab42788447956f9844389f2156d911dd22b"
 dependencies = [
  "async-graphql-value",
  "pest",
@@ -204,6 +208,7 @@ dependencies = [
 [[package]]
 name = "async-graphql-value"
 version = "7.0.16"
+source = "git+https://github.com/jeffutter/async-graphql.git?branch=allow-dynamic-schema-subtypes#f1a36ab42788447956f9844389f2156d911dd22b"
 dependencies = [
  "bytes",
  "indexmap",

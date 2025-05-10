@@ -9,12 +9,12 @@ repository = "https://github.com/jeffutter/federated_graphql_mock_server"
 
 [dependencies]
 anyhow = "1.0.97"
-# async-graphql = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes", features = ["dynamic-schema", "tracing"] }
+async-graphql = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
-async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
+# async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
 # async-graphql-axum = "7.0.3"
-# async-graphql-axum = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes" }
-async-graphql-axum = { path = "../async-graphql/integrations/axum" }
+async-graphql-axum = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes" }
+# async-graphql-axum = { path = "../async-graphql/integrations/axum" }
 async-stream = "0.3.6"
 axum = "0.8.1"
 clap = { version = "4.5.0", features = ["derive", "env"] }
