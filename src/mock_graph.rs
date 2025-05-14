@@ -25,8 +25,6 @@ pub enum MockFieldConfig {
 /// Represents the content configuration for a field
 #[derive(Debug, Clone)]
 pub enum MockContentConfig {
-    /// A nested field
-    Field(Box<MockFieldConfig>),
     /// A scalar type
     Type(Box<MockTypeConfig>),
     /// A list of items
@@ -510,7 +508,6 @@ impl MockGraph {
     /// Resolve content configuration
     fn resolve_content_config(&self, config: &MockContentConfig) -> Option<FieldValue> {
         match config {
-            MockContentConfig::Field(field_config) => self.resolve_field_config(field_config),
             MockContentConfig::Type(type_config) => self.resolve_type_config(type_config),
             MockContentConfig::List(list_config) => {
                 let count =

@@ -1,7 +1,12 @@
+mod mock_graph;
 mod schema;
+mod schema_handler;
+mod schema_watcher;
 mod server;
+mod supergraph_config;
 
 use clap::Parser;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{
@@ -21,11 +26,21 @@ struct Args {
     #[arg(long, env = "PORT", default_value_t = 8080)]
     port: usize,
 
-    #[arg(short, long)]
-    mock_schema: PathBuf,
+    /// Schema files in the format subgraph=file_name.graphql
+    #[arg(short, long, value_parser = parse_key_val)]
+    schemas: Vec<(String, PathBuf)>,
 
     #[arg(short, long)]
     output: Option<PathBuf>,
+}
+
+/// Parse a key-value pair in the format "key=value"
+fn parse_key_val(s: &str) -> Result<(String, PathBuf), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Invalid KEY=value: no `=` found in `{s}`"))?;
+    let path = PathBuf::from(value);
+    Ok((key.to_string(), path))
 }
 
 /// Setup tracing and logging
@@ -56,7 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("0.0.0.0:{}", args.port);
 
-    server::start_server(addr, args.mock_schema, args.output).await?;
+    // Convert Vec<(String, PathBuf)> to HashMap<String, PathBuf>
+    let schema_map: HashMap<String, PathBuf> = args.schemas.into_iter().collect();
+
+    server::start_server(addr, schema_map, args.output).await?;
 
     Ok(())
 }

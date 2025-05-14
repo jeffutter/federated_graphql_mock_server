@@ -1,5 +1,4 @@
 use async_graphql::{dynamic::*, Name, Value};
-use federated_graphql_mock_server::mock_graph::MockGraph;
 use futures_core::stream::Stream;
 use graphql_parser::schema::{
     EnumType, InputObjectType, InterfaceType, ObjectType, ScalarType, UnionType,
@@ -7,6 +6,8 @@ use graphql_parser::schema::{
 use indexmap::IndexMap;
 use std::{borrow::Borrow, collections::HashMap, pin::Pin};
 use tracing::trace;
+
+use crate::mock_graph::MockGraph;
 
 const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values", "select"];
 
