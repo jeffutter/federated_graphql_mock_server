@@ -1,8 +1,9 @@
 mod mock_graph;
 mod schema;
-mod schema_handler;
+mod schema_loader;
 mod schema_watcher;
 mod server;
+mod supergraph_compose;
 mod supergraph_config;
 
 use clap::Parser;

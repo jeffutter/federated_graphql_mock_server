@@ -10,8 +10,11 @@ use tower_http::trace::TraceLayer;
 use tower_service::Service;
 use tracing::Instrument;
 
-use crate::schema_handler::{Schema, SchemaHandler};
-use crate::supergraph_config::SupergraphConfig;
+use crate::{
+    schema_loader::{SchemaLoader, SchemaLoaderHandle},
+    schema_watcher::SchemaWatcher,
+};
+use crate::{supergraph_compose::SupergraphCompose, supergraph_config::SupergraphConfig};
 
 async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse {
     response::Html(GraphiQLSource::build().endpoint(endpoint).finish())
@@ -23,18 +26,38 @@ pub async fn start_server(
     schema_paths: HashMap<String, PathBuf>,
     output_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let schema_handler = Schema::new(&schema_paths.clone().into_iter().collect::<Vec<_>>()).await?;
-    let schema_handler = schema_handler.run();
+    let watcher = SchemaWatcher::new(&schema_paths.clone().into_iter().collect::<Vec<_>>())?;
+    let schema_loader =
+        SchemaLoader::new(&schema_paths.clone().into_iter().collect::<Vec<_>>()).await?;
+    let schema_loader_handle = schema_loader.run(watcher);
     let write_handle = output_path
+        .clone()
         .map(|path| {
-            let supergraph_config = SupergraphConfig::new(&addr, &path, schema_handler.clone())?;
+            let supergraph_config =
+                SupergraphConfig::new(&addr, &path, schema_loader_handle.clone())?;
             let handle = supergraph_config.run();
             anyhow::Ok(handle)
         })
         .transpose()?;
 
+    let write_handle1 = write_handle.clone();
+    let graphql_handle = output_path
+        .map(|path| {
+            let mut graphql_path = path.clone();
+            graphql_path.set_extension("graphql");
+
+            let compose = SupergraphCompose::new(&path, &graphql_path)?;
+            if let Some(handle) = write_handle1 {
+                let handle = compose.run(handle.stream());
+                return anyhow::Ok(handle);
+            }
+
+            panic!()
+        })
+        .transpose()?;
+
     // Build the router with routes for each subgraph
-    let router = build_router(schema_paths.keys(), schema_handler.clone());
+    let router = build_router(schema_paths.keys(), schema_loader_handle.clone());
 
     // Print server information
     print_server_info(&addr, &schema_paths);
@@ -48,16 +71,19 @@ pub async fn start_server(
         })
         .await?;
 
+    if let Some(graphql_handle) = graphql_handle {
+        graphql_handle.close().await?;
+    }
     if let Some(write_handle) = write_handle {
         write_handle.close().await?;
     }
-    schema_handler.close().await?;
+    schema_loader_handle.close().await?;
 
     Ok(())
 }
 
 /// Build the Axum router with routes for each subgraph
-fn build_router<I, K>(subgraph_names: I, schema_handler: SchemaHandler) -> Router
+fn build_router<I, K>(subgraph_names: I, schema_loader_handle: SchemaLoaderHandle) -> Router
 where
     I: IntoIterator<Item = K>,
     K: AsRef<str>,
@@ -68,7 +94,7 @@ where
             let subgraph_name = subgraph_name.as_ref().to_string();
             let endpoint = format!("/{}", subgraph_name);
             let endpoint_clone = endpoint.clone();
-            let schema_handler = schema_handler.clone();
+            let schema_loader_handle = schema_loader_handle.clone();
 
             router.route(
                 &endpoint,
@@ -76,7 +102,8 @@ where
                     {
                         move |req| {
                             async move {
-                                let mut handler = schema_handler.get(&subgraph_name).await.unwrap();
+                                let mut handler =
+                                    schema_loader_handle.get(&subgraph_name).await.unwrap();
                                 handler.call(req).await
                             }
                             .in_current_span()
@@ -140,12 +167,13 @@ mod tests {
         tempfile.write_all(schema.as_bytes()).unwrap();
 
         let schema_name = String::from("TestSchema");
-        let schema_handler = Schema::new(&[(schema_name.clone(), tempfile.path().to_path_buf())])
-            .await
-            .unwrap()
-            .handle();
+        let schema_loader_handle =
+            SchemaLoader::new(&[(schema_name.clone(), tempfile.path().to_path_buf())])
+                .await
+                .unwrap()
+                .handle();
 
-        let mut router = build_router(vec![&schema_name], schema_handler);
+        let mut router = build_router(vec![&schema_name], schema_loader_handle);
 
         // Create an entity query that requests User with its A and B fields
         let query = r#"
@@ -234,12 +262,13 @@ mod tests {
         tempfile.write_all(schema.as_bytes()).unwrap();
 
         let schema_name = String::from("TestSchema");
-        let schema_handler = Schema::new(&[(schema_name.clone(), tempfile.path().to_path_buf())])
-            .await
-            .unwrap()
-            .handle();
+        let schema_loader_handle =
+            SchemaLoader::new(&[(schema_name.clone(), tempfile.path().to_path_buf())])
+                .await
+                .unwrap()
+                .handle();
 
-        let mut router = build_router(vec![&schema_name], schema_handler);
+        let mut router = build_router(vec![&schema_name], schema_loader_handle);
 
         // Create an entity query that requests User with its A and B fields
         let query = r#"

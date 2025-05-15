@@ -12,18 +12,18 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
+use crate::mock_graph::MockGraph;
 use crate::schema;
-use crate::{mock_graph::MockGraph, schema_watcher::SchemaWatcher};
 
-struct SchemaInner {
+struct SchemaLoaderInner {
     sdl: String,
     path: PathBuf,
     schema: GraphQL<async_graphql::dynamic::Schema>,
 }
 
-impl Debug for SchemaInner {
+impl Debug for SchemaLoaderInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SchemaInner")
+        f.debug_struct("SchemaLoaderInner")
             .field("sdl", &self.sdl)
             .field("path", &self.path)
             .field("schema", &"xxx")
@@ -32,22 +32,21 @@ impl Debug for SchemaInner {
 }
 
 #[derive(Debug)]
-pub struct Schema {
-    watcher: RwLock<SchemaWatcher>,
-    schemas: RwLock<HashMap<String, SchemaInner>>,
+pub struct SchemaLoader {
+    schemas: RwLock<HashMap<String, SchemaLoaderInner>>,
     task_handle: RwLock<Option<JoinHandle<()>>>,
     tx: tokio::sync::broadcast::Sender<String>,
     cancellation_token: CancellationToken,
 }
 
 #[derive(Debug)]
-pub struct SchemaHandler {
+pub struct SchemaLoaderHandle {
     rx: tokio::sync::broadcast::Receiver<String>,
-    inner: Arc<Schema>,
+    inner: Arc<SchemaLoader>,
     cancellation_token: CancellationToken,
 }
 
-impl Clone for SchemaHandler {
+impl Clone for SchemaLoaderHandle {
     fn clone(&self) -> Self {
         Self {
             rx: self.rx.resubscribe(),
@@ -57,12 +56,11 @@ impl Clone for SchemaHandler {
     }
 }
 
-impl Schema {
+impl SchemaLoader {
     pub async fn new(paths: &[(String, PathBuf)]) -> anyhow::Result<Arc<Self>> {
         let (tx, _rx) = tokio::sync::broadcast::channel(100);
 
         let handler = Self {
-            watcher: RwLock::new(SchemaWatcher::new(paths)?),
             schemas: RwLock::new(HashMap::new()),
             task_handle: RwLock::new(None),
             tx,
@@ -81,7 +79,7 @@ impl Schema {
     pub async fn reload_schema(self: &Arc<Self>, name: &str) -> anyhow::Result<()> {
         let path = {
             let schemas = self.schemas.read().await;
-            let SchemaInner { path, .. } = schemas.get(name).context("Schema not found")?;
+            let SchemaLoaderInner { path, .. } = schemas.get(name).context("Schema not found")?;
             path.clone()
         };
         self.load_schema(name.to_string(), &path).await?;
@@ -93,7 +91,7 @@ impl Schema {
         let (sdl, schema) = load_schema_from_path(path)?;
         self.schemas.write().await.insert(
             name.clone(),
-            SchemaInner {
+            SchemaLoaderInner {
                 sdl,
                 schema: GraphQL::new(schema),
                 path: path.clone(),
@@ -103,20 +101,21 @@ impl Schema {
         Ok(())
     }
 
-    pub fn handle(self: &Arc<Self>) -> SchemaHandler {
-        SchemaHandler {
+    pub fn handle(self: &Arc<Self>) -> SchemaLoaderHandle {
+        SchemaLoaderHandle {
             rx: self.tx.subscribe(),
             inner: Arc::clone(self),
             cancellation_token: self.cancellation_token.clone(),
         }
     }
 
-    pub fn run(self: &Arc<Self>) -> SchemaHandler {
+    pub fn run(
+        self: &Arc<Self>,
+        mut watcher: impl Stream<Item = String> + Unpin + Send + 'static,
+    ) -> SchemaLoaderHandle {
         let state = Arc::clone(self);
 
         let task = tokio::spawn(async move {
-            let mut watcher = state.watcher.write().await;
-
             loop {
                 select! {
                     Some(schema) = watcher.next()=> {
@@ -139,7 +138,7 @@ impl Schema {
     }
 }
 
-impl SchemaHandler {
+impl SchemaLoaderHandle {
     pub fn stream(&self) -> impl Stream<Item = anyhow::Result<String>> {
         BroadcastStream::new(self.rx.resubscribe()).err_into()
     }

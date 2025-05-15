@@ -5,21 +5,27 @@ use std::{
     sync::Arc,
 };
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::{select, sync::RwLock, task::JoinHandle};
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::schema_handler::SchemaHandler;
+use crate::schema_loader::SchemaLoaderHandle;
 
 pub struct SupergraphConfigHandle {
+    rx: tokio::sync::broadcast::Receiver<()>,
     inner: Arc<SupergraphConfig>,
     cancellation_token: CancellationToken,
 }
 
 impl SupergraphConfigHandle {
+    pub fn stream(&self) -> impl Stream<Item = anyhow::Result<()>> {
+        BroadcastStream::new(self.rx.resubscribe()).err_into()
+    }
+
     pub async fn close(&self) -> anyhow::Result<()> {
         self.cancellation_token.cancel();
         if let Some(x) = self.inner.task_handle.write().await.take() {
@@ -34,19 +40,22 @@ pub struct SupergraphConfig {
     output_path: PathBuf,
     _temp_dir: TempDir,
     temp_dir_path: PathBuf,
-    schema_handler: SchemaHandler,
+    schema_handler: SchemaLoaderHandle,
     cancellation_token: CancellationToken,
     task_handle: RwLock<Option<JoinHandle<anyhow::Result<()>>>>,
+    tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl SupergraphConfig {
     pub fn new(
         addr: &str,
         output_path: &Path,
-        schema_handler: SchemaHandler,
+        schema_handler: SchemaLoaderHandle,
     ) -> anyhow::Result<Arc<Self>> {
         let temp_dir = TempDir::new()?;
         let temp_dir_path = temp_dir.path().to_path_buf();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel(100);
 
         Ok(Arc::new(Self {
             addr: addr.to_string(),
@@ -56,6 +65,7 @@ impl SupergraphConfig {
             schema_handler,
             cancellation_token: CancellationToken::new(),
             task_handle: RwLock::new(None),
+            tx,
         }))
     }
 
@@ -87,6 +97,7 @@ impl SupergraphConfig {
         Arc::new(SupergraphConfigHandle {
             inner: Arc::clone(self),
             cancellation_token: self.cancellation_token.clone(),
+            rx: self.tx.subscribe(),
         })
     }
 
@@ -148,6 +159,8 @@ impl SupergraphConfig {
             "Updated supergraph configuration at: {:?}",
             self.output_path
         );
+
+        self.tx.send(())?;
 
         Ok(())
     }
