@@ -5,10 +5,8 @@ use std::{collections::HashMap, path::PathBuf};
 use anyhow::Context;
 use async_graphql::{dynamic::*, extensions::Tracing};
 use async_graphql_axum::GraphQL;
-use futures::{Stream, StreamExt, TryStreamExt};
 use graphql_parser::schema::{Definition, Document, TypeDefinition};
-use tokio::{select, sync::RwLock, task::JoinHandle};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
@@ -70,7 +68,10 @@ impl SchemaLoader {
         let handler = Arc::new(handler);
 
         for (name, path) in paths {
-            handler.load_schema(name.to_string(), path).await?;
+            handler
+                .load_schema(name.to_string(), path)
+                .await
+                .with_context(|| format!("Subgraph: {name}"))?;
         }
 
         Ok(handler)
@@ -82,7 +83,9 @@ impl SchemaLoader {
             let SchemaLoaderInner { path, .. } = schemas.get(name).context("Schema not found")?;
             path.clone()
         };
-        self.load_schema(name.to_string(), &path).await?;
+        self.load_schema(name.to_string(), &path)
+            .await
+            .with_context(|| format!("Subgraph: {name}"))?;
 
         Ok(())
     }
@@ -108,39 +111,11 @@ impl SchemaLoader {
             cancellation_token: self.cancellation_token.clone(),
         }
     }
-
-    pub fn run(
-        self: &Arc<Self>,
-        mut watcher: impl Stream<Item = String> + Unpin + Send + 'static,
-    ) -> SchemaLoaderHandle {
-        let state = Arc::clone(self);
-
-        let task = tokio::spawn(async move {
-            loop {
-                select! {
-                    Some(schema) = watcher.next()=> {
-                        state.reload_schema(&schema).await.unwrap();
-                    }
-                    _ = state.cancellation_token.cancelled() => break
-                }
-            }
-        });
-
-        let state_for_handle = Arc::clone(self);
-
-        // store task handle
-        tokio::spawn(async move {
-            *state_for_handle.task_handle.write().await = Some(task);
-        });
-
-        // return handle for read-only access
-        self.handle()
-    }
 }
 
 impl SchemaLoaderHandle {
-    pub fn stream(&self) -> impl Stream<Item = anyhow::Result<String>> {
-        BroadcastStream::new(self.rx.resubscribe()).err_into()
+    pub async fn done(&self) {
+        self.inner.tx.closed().await
     }
 
     pub async fn name_and_sdl(&self) -> Vec<(String, String)> {
@@ -212,56 +187,63 @@ fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::
         .definitions
         .clone()
         .iter()
-        .fold(
+        .try_fold(
             async_graphql::dynamic::Schema::build(
                 "Query",
                 mutation_query_name,
                 subscription_query_name,
             )
             .data(mock_graph),
-            |schema, definition| match definition {
-                Definition::SchemaDefinition(_schema_definition) => schema,
-                Definition::TypeDefinition(source_type_definition) => {
-                    match source_type_definition {
-                        TypeDefinition::Scalar(source_scalar) => {
-                            schema::register_scalar(schema, source_scalar)
-                        }
-                        TypeDefinition::Object(source_object) => {
-                            // We need to force rename the root query to "Query" as async-graphql
-                            // won't output the query/mutation/subscription object mapping with `federation`
-                            // https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
-                            let source_object = if source_object.name == root_query_name {
-                                let mut source_object = source_object.clone();
-                                source_object.name = "Query";
-                                source_object
-                            } else {
-                                source_object.clone()
-                            };
-                            //TODO: Subscriptions probably don't actually work. Likely need to
-                            // register an entirely different tree of objects for subscriptions
-                            if Some(source_object.name) == subscription_query_name {
-                                return schema::register_subscription_object(schema, source_object);
+            |schema, definition| -> anyhow::Result<SchemaBuilder> {
+                match definition {
+                    Definition::SchemaDefinition(_schema_definition) => Ok(schema),
+                    Definition::TypeDefinition(source_type_definition) => {
+                        match source_type_definition {
+                            TypeDefinition::Scalar(source_scalar) => {
+                                Ok(schema::register_scalar(schema, source_scalar)?)
                             }
-                            schema::register_object(schema, source_object)
-                        }
-                        TypeDefinition::Interface(source_interface) => {
-                            schema::register_interface(schema, source_interface)
-                        }
-                        TypeDefinition::Union(source_union) => {
-                            schema::register_union(schema, source_union)
-                        }
-                        TypeDefinition::Enum(source_enum) => {
-                            schema::register_enum(schema, source_enum)
-                        }
-                        TypeDefinition::InputObject(source_input_object) => {
-                            schema::register_input_object(schema, source_input_object)
+                            TypeDefinition::Object(source_object) => {
+                                // We need to force rename the root query to "Query" as async-graphql
+                                // won't output the query/mutation/subscription object mapping with `federation`
+                                // https://github.com/async-graphql/async-graphql/blob/75a9d14e8f45176a32bac7f458534c05cabd10cc/src/registry/export_sdl.rs#L158-L201
+                                let source_object = if source_object.name == root_query_name {
+                                    let mut source_object = source_object.clone();
+                                    source_object.name = "Query";
+                                    source_object
+                                } else {
+                                    source_object.clone()
+                                };
+                                //TODO: Subscriptions probably don't actually work. Likely need to
+                                // register an entirely different tree of objects for subscriptions
+                                if Some(source_object.name) == subscription_query_name {
+                                    return schema::register_subscription_object(
+                                        schema,
+                                        source_object,
+                                    );
+                                }
+                                schema::register_object(schema, source_object)
+                            }
+                            TypeDefinition::Interface(source_interface) => {
+                                schema::register_interface(schema, source_interface)
+                            }
+                            TypeDefinition::Union(source_union) => {
+                                schema::register_union(schema, source_union)
+                            }
+                            TypeDefinition::Enum(source_enum) => {
+                                schema::register_enum(schema, source_enum)
+                            }
+                            TypeDefinition::InputObject(source_input_object) => {
+                                schema::register_input_object(schema, source_input_object)
+                            }
                         }
                     }
+                    Definition::TypeExtension(_type_extension) => {
+                        anyhow::bail!("Type extensions are not supported")
+                    }
+                    Definition::DirectiveDefinition(_source_directive_definition) => Ok(schema),
                 }
-                Definition::TypeExtension(_type_extension) => unimplemented!(),
-                Definition::DirectiveDefinition(_source_directive_definition) => schema,
             },
-        )
+        )?
         .enable_federation()
         .extension(Tracing)
         .entity_resolver(|ctx| {
@@ -297,8 +279,9 @@ fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::
                 }
                 .in_current_span(),
             )
-        })
-        .finish()?;
+        });
+
+    let schema = schema.finish()?;
 
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
 

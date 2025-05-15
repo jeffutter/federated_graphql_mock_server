@@ -1,3 +1,4 @@
+use anyhow::Result;
 use async_graphql::{dynamic::*, Name, Value};
 use futures_core::stream::Stream;
 use graphql_parser::schema::{
@@ -52,7 +53,7 @@ fn map_type_to_typeref<'a>(ty: &graphql_parser::query::Type<'a, &'a str>) -> Typ
 pub fn register_scalar<'a>(
     schema: SchemaBuilder,
     source_scalar: &'a ScalarType<&'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut s = Scalar::new(source_scalar.name);
     if let Some(description) = source_scalar.description.as_ref() {
         s = s.description(description);
@@ -61,23 +62,24 @@ pub fn register_scalar<'a>(
     let s = source_scalar
         .directives
         .iter()
-        .fold(s, |s, source_directive| {
-            s.directive(source_directive.arguments.iter().fold(
+        .try_fold(s, |s, source_directive| {
+            let directive = source_directive.arguments.iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(*k, v)
                 },
-            ))
-        });
+            );
+            anyhow::Ok(s.directive(directive))
+        })?;
 
-    schema.register(s)
+    Ok(schema.register(s))
 }
 
 pub fn register_interface<'a>(
     schema: SchemaBuilder,
     source_interface: &'a InterfaceType<&'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut i = Interface::new(source_interface.name);
     if let Some(description) = source_interface.description.as_ref() {
         i = i.description(description);
@@ -86,60 +88,65 @@ pub fn register_interface<'a>(
     let i = source_interface
         .directives
         .iter()
-        .fold(i, |i, source_directive| {
-            i.directive(source_directive.arguments.iter().fold(
+        .try_fold(i, |i, source_directive| {
+            let directive = source_directive.arguments.iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(*k, v)
                 },
-            ))
-        });
+            );
+            anyhow::Ok(i.directive(directive))
+        })?;
 
     let i = source_interface
         .implements_interfaces
         .iter()
-        .fold(i, |i, interface| i.implement(*interface));
+        .try_fold(i, |i, interface| anyhow::Ok(i.implement(*interface)))?;
 
-    schema.register(source_interface.fields.iter().fold(i, |i, source_field| {
-        let field_type = map_type_to_typeref(&source_field.field_type);
+    let i = source_interface
+        .fields
+        .iter()
+        .try_fold(i, |i, source_field| {
+            let field_type = map_type_to_typeref(&source_field.field_type);
 
-        let field = InterfaceField::new(source_field.name, field_type);
+            let field = InterfaceField::new(source_field.name, field_type);
 
-        let field = source_field
-            .arguments
-            .clone()
-            .into_iter()
-            .fold(field, |f, source_argument| {
-                let argument = InputValue::new(
-                    source_argument.name,
-                    map_type_to_typeref(&source_argument.value_type),
-                );
-                let argument = source_argument
-                    .directives
-                    .into_iter()
-                    .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                    .fold(argument, |a, source_directive| {
-                        let d = source_directive.arguments.into_iter().fold(
-                            Directive::new(source_directive.name),
-                            |d, (k, v)| {
-                                let v = parser_value_to_query_value(v);
-                                d.argument(k, v)
-                            },
-                        );
-                        a.directive(d)
-                    });
-                f.argument(argument)
-            });
+            let field = source_field.arguments.clone().into_iter().try_fold(
+                field,
+                |f, source_argument| {
+                    let argument = InputValue::new(
+                        source_argument.name,
+                        map_type_to_typeref(&source_argument.value_type),
+                    );
+                    let argument = source_argument
+                        .directives
+                        .into_iter()
+                        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+                        .try_fold(argument, |a, source_directive| {
+                            let d = source_directive.arguments.into_iter().fold(
+                                Directive::new(source_directive.name),
+                                |d, (k, v)| {
+                                    let v = parser_value_to_query_value(v);
+                                    d.argument(k, v)
+                                },
+                            );
+                            anyhow::Ok(a.directive(d))
+                        })?;
+                    anyhow::Ok(f.argument(argument))
+                },
+            )?;
 
-        i.field(field)
-    }))
+            anyhow::Ok(i.field(field))
+        })?;
+
+    Ok(schema.register(i))
 }
 
 pub fn register_union<'a>(
     schema: SchemaBuilder,
     source_union: &'a UnionType<&'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut u = Union::new(source_union.name);
     if let Some(description) = source_union.description.as_ref() {
         u = u.description(description);
@@ -148,28 +155,29 @@ pub fn register_union<'a>(
     let u = source_union
         .directives
         .iter()
-        .fold(u, |u, source_directive| {
-            u.directive(source_directive.arguments.iter().fold(
+        .try_fold(u, |u, source_directive| {
+            let directive = source_directive.arguments.iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(*k, v)
                 },
-            ))
-        });
+            );
+            anyhow::Ok(u.directive(directive))
+        })?;
 
-    schema.register(
-        source_union
-            .types
-            .iter()
-            .fold(u, |u, ut| u.possible_type(*ut)),
-    )
+    let u = source_union
+        .types
+        .iter()
+        .try_fold(u, |u, ut| anyhow::Ok(u.possible_type(*ut)))?;
+
+    Ok(schema.register(u))
 }
 
 pub fn register_enum<'a>(
     schema: SchemaBuilder,
     source_enum: &'a EnumType<&'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut en = Enum::new(source_enum.name);
     if let Some(description) = source_enum.description.as_ref() {
         en = en.description(description);
@@ -178,28 +186,28 @@ pub fn register_enum<'a>(
     let en = source_enum
         .directives
         .iter()
-        .fold(en, |en, source_directive| {
-            en.directive(source_directive.arguments.iter().fold(
+        .try_fold(en, |en, source_directive| {
+            let directive = source_directive.arguments.iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(*k, v)
                 },
-            ))
-        });
+            );
+            anyhow::Ok(en.directive(directive))
+        })?;
 
-    schema.register(
-        source_enum
-            .values
-            .iter()
-            .fold(en, |en, value| en.item(EnumItem::new(value.name))),
-    )
+    let en = source_enum.values.iter().try_fold(en, |en, value| {
+        anyhow::Ok(en.item(EnumItem::new(value.name)))
+    })?;
+
+    Ok(schema.register(en))
 }
 
 pub fn register_input_object<'a>(
     schema: SchemaBuilder,
     source_input_object: &'a InputObjectType<&'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut i = InputObject::new(source_input_object.name);
     if let Some(description) = source_input_object.description.as_ref() {
         i = i.description(description);
@@ -208,26 +216,29 @@ pub fn register_input_object<'a>(
     let i = source_input_object
         .directives
         .iter()
-        .fold(i, |i, source_directive| {
-            i.directive(source_directive.arguments.iter().fold(
+        .try_fold(i, |i, source_directive| {
+            let directive = source_directive.arguments.iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(*k, v)
                 },
-            ))
-        });
+            );
+            anyhow::Ok(i.directive(directive))
+        })?;
 
-    schema.register(source_input_object.fields.iter().fold(i, |i, field| {
+    let i = source_input_object.fields.iter().try_fold(i, |i, field| {
         let field_type = map_type_to_typeref(&field.value_type);
-        i.field(InputValue::new(field.name, field_type))
-    }))
+        anyhow::Ok(i.field(InputValue::new(field.name, field_type)))
+    })?;
+
+    Ok(schema.register(i))
 }
 
 pub fn register_subscription_object<'a>(
     schema: SchemaBuilder,
     source_object: ObjectType<'a, &'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut o = Subscription::new(source_object.name);
 
     if let Some(description) = source_object.description.as_ref() {
@@ -236,75 +247,75 @@ pub fn register_subscription_object<'a>(
 
     // Subscriptions can't have key directives. Or any directives?
 
-    schema.register(
-        source_object
-            .fields
-            .into_iter()
-            .fold(o, |object, source_field| {
-                let field_type = map_type_to_typeref(&source_field.field_type);
+    let o = source_object
+        .fields
+        .into_iter()
+        .try_fold(o, |object, source_field| {
+            let field_type = map_type_to_typeref(&source_field.field_type);
 
-                let source_object_name = source_object.name.to_string();
-                let field_name = source_field.name.to_string();
+            let source_object_name = source_object.name.to_string();
+            let field_name = source_field.name.to_string();
 
-                let field =
-                    SubscriptionField::new(field_name.clone(), field_type.clone(), move |ctx| {
-                        let source_object_name = source_object_name.clone();
-                        let field_name = field_name.clone();
+            let field =
+                SubscriptionField::new(field_name.clone(), field_type.clone(), move |ctx| {
+                    let source_object_name = source_object_name.clone();
+                    let field_name = field_name.clone();
 
-                        let parent_map = ctx.parent_value.as_value().and_then(|v| match v {
-                            Value::Object(index_map) => Some(index_map),
-                            _ => None,
-                        });
-
-                        if let Some(parent_map) = parent_map {
-                            let field_name = &Name::new(field_name.clone());
-
-                            if let Some(existing_value) = parent_map.get(field_name) {
-                                return SubscriptionFieldFuture::new(async move {
-                                    let stream: Pin<
-                                        Box<
-                                            dyn Stream<
-                                                    Item = async_graphql::Result<
-                                                        Value,
-                                                        async_graphql::Error,
-                                                    >,
-                                                > + Send,
-                                        >,
-                                    > = Box::pin(async_stream::stream! {
-                                        yield Ok(existing_value.to_owned());
-                                    });
-                                    Ok(stream)
-                                });
-                            }
-                        }
-
-                        // ctx.data::<Mocker>()
-                        //     .unwrap()
-                        //     .get_obj_stream(source_object_name, field_name)
-
-
-                        SubscriptionFieldFuture::new(async move {
-                            let stream = async_stream::stream! {
-                                let res = ctx.data::<MockGraph>().unwrap().resolve_field(&source_object_name, &field_name).unwrap();
-                                yield Ok(res);
-                            };
-
-                            Ok(stream)
-                        })
-
+                    let parent_map = ctx.parent_value.as_value().and_then(|v| match v {
+                        Value::Object(index_map) => Some(index_map),
+                        _ => None,
                     });
 
-                // Subscription Fields can't have directives
+                    if let Some(parent_map) = parent_map {
+                        let field_name = &Name::new(field_name.clone());
 
-                object.field(field)
-            }),
-    )
+                        if let Some(existing_value) = parent_map.get(field_name) {
+                            return SubscriptionFieldFuture::new(async move {
+                                let stream: Pin<
+                                    Box<
+                                        dyn Stream<
+                                                Item = async_graphql::Result<
+                                                    Value,
+                                                    async_graphql::Error,
+                                                >,
+                                            > + Send,
+                                    >,
+                                > = Box::pin(async_stream::stream! {
+                                    yield Ok(existing_value.to_owned());
+                                });
+                                Ok(stream)
+                            });
+                        }
+                    }
+
+                    // ctx.data::<Mocker>()
+                    //     .unwrap()
+                    //     .get_obj_stream(source_object_name, field_name)
+
+
+                    SubscriptionFieldFuture::new(async move {
+                        let stream = async_stream::stream! {
+                            let res = ctx.data::<MockGraph>().unwrap().resolve_field(&source_object_name, &field_name).unwrap();
+                            yield Ok(res);
+                        };
+
+                        Ok(stream)
+                    })
+
+                });
+
+            // Subscription Fields can't have directives
+
+            anyhow::Ok(object.field(field))
+        })?;
+
+    Ok(schema.register(o))
 }
 
 pub fn register_object<'a>(
     schema: SchemaBuilder,
     source_object: ObjectType<'a, &'a str>,
-) -> SchemaBuilder {
+) -> Result<SchemaBuilder> {
     let mut o = Object::new(source_object.name);
     if let Some(description) = source_object.description.as_ref() {
         o = o.description(description);
@@ -314,7 +325,7 @@ pub fn register_object<'a>(
         .directives
         .into_iter()
         .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-        .fold(o, |o, source_directive| {
+        .try_fold(o, |o, source_directive| {
             if source_directive.name == "key" {
                 let arguments: HashMap<String, graphql_parser::query::Value<'_, &str>> =
                     source_directive
@@ -345,27 +356,28 @@ pub fn register_object<'a>(
                     o.unresolvable(key_fields)
                 };
 
-                return o;
+                return anyhow::Ok(o);
             }
 
-            o.directive(source_directive.arguments.into_iter().fold(
+            let directive = source_directive.arguments.into_iter().fold(
                 Directive::new(source_directive.name),
                 |d, (k, v)| {
                     let v = parser_value_to_query_value(v);
                     d.argument(k.to_string(), v)
                 },
-            ))
-        });
+            );
+            Ok(o.directive(directive))
+        })?;
 
     let o = source_object
         .implements_interfaces
         .iter()
-        .fold(o, |o, interface| o.implement(*interface));
+        .try_fold(o, |o, interface| anyhow::Ok(o.implement(*interface)))?;
 
     let o = source_object
         .fields
         .into_iter()
-        .fold(o, |object, source_field| {
+        .try_fold(o, |object, source_field| {
             let field_type = map_type_to_typeref(&source_field.field_type);
 
             let source_object_name = source_object.name.to_string();
@@ -398,36 +410,37 @@ pub fn register_object<'a>(
                 })
             });
 
-            let field = source_field
-                .arguments
-                .into_iter()
-                .fold(field, |f, source_argument| {
-                    let argument = InputValue::new(
-                        source_argument.name,
-                        map_type_to_typeref(&source_argument.value_type),
-                    );
-                    let argument = source_argument
-                        .directives
-                        .into_iter()
-                        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                        .fold(argument, |a, source_directive| {
-                            let d = source_directive.arguments.into_iter().fold(
-                                Directive::new(source_directive.name),
-                                |d, (k, v)| {
-                                    let v = parser_value_to_query_value(v);
-                                    d.argument(k, v)
-                                },
-                            );
-                            a.directive(d)
-                        });
-                    f.argument(argument)
-                });
+            let field =
+                source_field
+                    .arguments
+                    .into_iter()
+                    .try_fold(field, |f, source_argument| {
+                        let argument = InputValue::new(
+                            source_argument.name,
+                            map_type_to_typeref(&source_argument.value_type),
+                        );
+                        let argument = source_argument
+                            .directives
+                            .into_iter()
+                            .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+                            .try_fold(argument, |a, source_directive| {
+                                let d = source_directive.arguments.into_iter().fold(
+                                    Directive::new(source_directive.name),
+                                    |d, (k, v)| {
+                                        let v = parser_value_to_query_value(v);
+                                        d.argument(k, v)
+                                    },
+                                );
+                                anyhow::Ok(a.directive(d))
+                            })?;
+                        anyhow::Ok(f.argument(argument))
+                    })?;
 
             let field = source_field
                 .directives
                 .into_iter()
                 .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                .fold(field, |f, source_directive| {
+                .try_fold(field, |f, source_directive| {
                     let d = source_directive.arguments.into_iter().fold(
                         Directive::new(source_directive.name),
                         |d, (k, v)| {
@@ -435,11 +448,13 @@ pub fn register_object<'a>(
                             d.argument(k, v)
                         },
                     );
-                    f.directive(d)
-                });
+                    anyhow::Ok(f.directive(d))
+                })?;
 
-            object.field(field)
-        });
+            anyhow::Ok(object.field(field))
+        })?;
 
-    schema.register(o)
+    let res = schema.register(o);
+
+    Ok(res)
 }

@@ -4,11 +4,13 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use futures::TryStreamExt;
 use std::{collections::HashMap, path::PathBuf};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, select};
+use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tower_service::Service;
-use tracing::Instrument;
+use tracing::{error, info, trace, Instrument};
 
 use crate::{
     schema_loader::{SchemaLoader, SchemaLoaderHandle},
@@ -24,37 +26,49 @@ async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse {
 pub async fn start_server(
     addr: String,
     schema_paths: HashMap<String, PathBuf>,
-    output_path: Option<PathBuf>,
+    output_path: PathBuf,
 ) -> anyhow::Result<()> {
-    let watcher = SchemaWatcher::new(&schema_paths.clone().into_iter().collect::<Vec<_>>())?;
+    let mut watcher = SchemaWatcher::new(&schema_paths.clone().into_iter().collect::<Vec<_>>())?;
     let schema_loader =
         SchemaLoader::new(&schema_paths.clone().into_iter().collect::<Vec<_>>()).await?;
-    let schema_loader_handle = schema_loader.run(watcher);
-    let write_handle = output_path
-        .clone()
-        .map(|path| {
-            let supergraph_config =
-                SupergraphConfig::new(&addr, &path, schema_loader_handle.clone())?;
-            let handle = supergraph_config.run();
-            anyhow::Ok(handle)
-        })
-        .transpose()?;
+    let schema_loader_handle = schema_loader.handle();
+    let config_writer = SupergraphConfig::new(&addr, &output_path, schema_loader_handle.clone())?;
 
-    let write_handle1 = write_handle.clone();
-    let graphql_handle = output_path
-        .map(|path| {
-            let mut graphql_path = path.clone();
-            graphql_path.set_extension("graphql");
+    let mut graphql_path = output_path.clone();
+    graphql_path.set_extension("graphql");
 
-            let compose = SupergraphCompose::new(&path, &graphql_path)?;
-            if let Some(handle) = write_handle1 {
-                let handle = compose.run(handle.stream());
-                return anyhow::Ok(handle);
-            }
+    let compose = SupergraphCompose::new(&output_path, &graphql_path)?;
 
-            panic!()
-        })
-        .transpose()?;
+    let mut watcher1 = watcher.clone();
+    let task = tokio::spawn(async move {
+        while let Ok(Some(name)) = watcher1.try_next().await {
+            info!("Schema reloading {}", name);
+            schema_loader.reload_schema(&name).await?;
+            info!("Schema reloaded {}", name);
+
+            info!(
+                "Supergraph Config Writing to {}",
+                output_path.to_string_lossy()
+            );
+            config_writer.update_supergraph_config().await?;
+            info!(
+                "Supergraph Config Written {}",
+                output_path.to_string_lossy()
+            );
+
+            info!(
+                "Supergraph Schema Composing {}",
+                graphql_path.to_string_lossy()
+            );
+            compose.compose_supergraph_schema().await?;
+            info!(
+                "Supergraph Schema Composed {}",
+                graphql_path.to_string_lossy()
+            );
+        }
+
+        anyhow::Ok(())
+    });
 
     // Build the router with routes for each subgraph
     let router = build_router(schema_paths.keys(), schema_loader_handle.clone());
@@ -63,21 +77,66 @@ pub async fn start_server(
     print_server_info(&addr, &schema_paths);
 
     // Start the server
-    axum::serve(TcpListener::bind(addr).await?, router)
-        .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to listen to ctrl-c");
-        })
-        .await?;
+    let cancellation_token = CancellationToken::new();
+    let cancellation_token1 = cancellation_token.clone();
+    let server_task = tokio::spawn(async move {
+        axum::serve(TcpListener::bind(addr).await?, router)
+            .with_graceful_shutdown(async move {
+                let ctrl_c = tokio::signal::ctrl_c();
 
-    if let Some(graphql_handle) = graphql_handle {
-        graphql_handle.close().await?;
+                let cancellation = cancellation_token1;
+
+                select! {
+                    _ = ctrl_c => (),
+                    _ = cancellation.cancelled() => ()
+                }
+            })
+            .await?;
+
+        anyhow::Ok(())
+    });
+
+    select! {
+        _ = watcher.done() => {
+            trace!("Watcher Done");
+            cancellation_token.cancel();
+            schema_loader_handle.close().await?;
+        }
+        _ = schema_loader_handle.done() => {
+            trace!("Schema Loader Done");
+            cancellation_token.cancel();
+            watcher.close().await;
+        }
+        server_task_res = server_task => {
+            let server_task_res = server_task_res
+                .map_err(anyhow::Error::from)
+                .and_then(|x| x );
+
+            if server_task_res.is_err() {
+                error!("Server Task Failed: {:?}", server_task_res);
+            }
+            trace!("Server Task Done");
+            watcher.close().await;
+            schema_loader_handle.close().await?;
+
+        }
+        task_res = task => {
+            let task_res = task_res
+                .map_err(anyhow::Error::from)
+                .and_then(|x| x);
+
+            if task_res.is_err() {
+                error!("Task Failed: {:?}", task_res);
+            }
+            trace!("Task Done");
+            cancellation_token.cancel();
+            watcher.close().await;
+            schema_loader_handle.close().await?;
+        }
     }
-    if let Some(write_handle) = write_handle {
-        write_handle.close().await?;
-    }
-    schema_loader_handle.close().await?;
+    // watcher.close().await;
+    // schema_loader_handle.close().await?;
+    // task.await??;
 
     Ok(())
 }

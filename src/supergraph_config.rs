@@ -5,35 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use futures::{Stream, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use tokio::{select, sync::RwLock, task::JoinHandle};
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_util::sync::CancellationToken;
 
 use crate::schema_loader::SchemaLoaderHandle;
-
-pub struct SupergraphConfigHandle {
-    rx: tokio::sync::broadcast::Receiver<()>,
-    inner: Arc<SupergraphConfig>,
-    cancellation_token: CancellationToken,
-}
-
-impl SupergraphConfigHandle {
-    pub fn stream(&self) -> impl Stream<Item = anyhow::Result<()>> {
-        BroadcastStream::new(self.rx.resubscribe()).err_into()
-    }
-
-    pub async fn close(&self) -> anyhow::Result<()> {
-        self.cancellation_token.cancel();
-        if let Some(x) = self.inner.task_handle.write().await.take() {
-            x.await??;
-        }
-        anyhow::Ok(())
-    }
-}
 
 pub struct SupergraphConfig {
     addr: String,
@@ -41,9 +17,6 @@ pub struct SupergraphConfig {
     _temp_dir: TempDir,
     temp_dir_path: PathBuf,
     schema_handler: SchemaLoaderHandle,
-    cancellation_token: CancellationToken,
-    task_handle: RwLock<Option<JoinHandle<anyhow::Result<()>>>>,
-    tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl SupergraphConfig {
@@ -55,53 +28,16 @@ impl SupergraphConfig {
         let temp_dir = TempDir::new()?;
         let temp_dir_path = temp_dir.path().to_path_buf();
 
-        let (tx, _rx) = tokio::sync::broadcast::channel(100);
-
         Ok(Arc::new(Self {
             addr: addr.to_string(),
             output_path: output_path.to_path_buf(),
             _temp_dir: temp_dir,
             temp_dir_path,
             schema_handler,
-            cancellation_token: CancellationToken::new(),
-            task_handle: RwLock::new(None),
-            tx,
         }))
     }
 
-    pub fn run(self: &Arc<Self>) -> Arc<SupergraphConfigHandle> {
-        let state = Arc::clone(self);
-
-        let task = tokio::spawn(async move {
-            let mut update_stream = state.schema_handler.stream();
-
-            loop {
-                select! {
-                    Some(Ok(_name)) = update_stream.next() => {
-                        state.update_supergraph_config().await?;
-                    }
-                    _ = state.cancellation_token.cancelled() => break
-                }
-            }
-
-            anyhow::Ok(())
-        });
-
-        let state_for_handle = Arc::clone(self);
-
-        // store task handle
-        tokio::spawn(async move {
-            *state_for_handle.task_handle.write().await = Some(task);
-        });
-
-        Arc::new(SupergraphConfigHandle {
-            inner: Arc::clone(self),
-            cancellation_token: self.cancellation_token.clone(),
-            rx: self.tx.subscribe(),
-        })
-    }
-
-    async fn update_supergraph_config(self: &Arc<Self>) -> anyhow::Result<()> {
+    pub async fn update_supergraph_config(self: &Arc<Self>) -> anyhow::Result<()> {
         // Create the output directory if it doesn't exist
         if let Some(parent) = self.output_path.parent() {
             fs::create_dir_all(parent)?;
@@ -154,13 +90,6 @@ impl SupergraphConfig {
 
         // Write the supergraph.yaml file
         fs::write(self.output_path.clone(), yaml_content)?;
-
-        println!(
-            "Updated supergraph configuration at: {:?}",
-            self.output_path
-        );
-
-        self.tx.send(())?;
 
         Ok(())
     }

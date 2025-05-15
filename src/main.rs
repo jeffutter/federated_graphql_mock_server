@@ -7,9 +7,11 @@ mod supergraph_compose;
 mod supergraph_config;
 
 use clap::Parser;
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::ExitCode;
+use std::{collections::HashMap, process::Termination};
 use tracing::level_filters::LevelFilter;
+use tracing::{error, info};
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
@@ -32,7 +34,7 @@ struct Args {
     schemas: Vec<(String, PathBuf)>,
 
     #[arg(short, long)]
-    output: Option<PathBuf>,
+    output: PathBuf,
 }
 
 /// Parse a key-value pair in the format "key=value"
@@ -66,16 +68,21 @@ fn setup_tracing(args: &Args) {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ExitCode {
     let args = Args::parse();
     setup_tracing(&args);
 
     let addr = format!("0.0.0.0:{}", args.port);
 
-    // Convert Vec<(String, PathBuf)> to HashMap<String, PathBuf>
     let schema_map: HashMap<String, PathBuf> = args.schemas.into_iter().collect();
 
-    server::start_server(addr, schema_map, args.output).await?;
+    let res = server::start_server(addr, schema_map, args.output).await;
 
-    Ok(())
+    if let Err(e) = res {
+        error!("Error starting server: {:?}", e);
+        ExitCode::FAILURE.report()
+    } else {
+        info!("Exiting");
+        ExitCode::SUCCESS.report()
+    }
 }
