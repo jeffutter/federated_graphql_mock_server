@@ -337,7 +337,7 @@ pub fn register_object<'a>(
                 let key_fields = arguments
                     .get("fields")
                     .and_then(|fields| match fields {
-                        graphql_parser::query::Value::String(ref s) => Some(s),
+                        graphql_parser::query::Value::String(s) => Some(s),
                         _ => None,
                     })
                     .unwrap();

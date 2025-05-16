@@ -1,6 +1,6 @@
 [package]
 name = "federated_graphql_mock_server"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "GraphQLserver genrator with mock data"
 repository = "https://github.com/jeffutter/federated_graphql_mock_server"

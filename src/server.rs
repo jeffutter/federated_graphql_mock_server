@@ -18,7 +18,7 @@ use crate::{
 };
 use crate::{supergraph_compose::SupergraphCompose, supergraph_config::SupergraphConfig};
 
-async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse {
+async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse + use<> {
     response::Html(GraphiQLSource::build().endpoint(endpoint).finish())
 }
 
