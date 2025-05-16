@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use tracing::error;
+use tracing::{error, instrument};
 
 pub struct SupergraphCompose {
     output_path: PathBuf,
@@ -20,6 +20,7 @@ impl SupergraphCompose {
         }))
     }
 
+    #[instrument(skip(self))]
     pub async fn compose_supergraph_schema(self: &Arc<Self>) -> anyhow::Result<()> {
         // Create the output directory if it doesn't exist
         if let Some(parent) = self.output_path.parent() {

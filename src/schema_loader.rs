@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
@@ -8,7 +7,7 @@ use async_graphql_axum::GraphQL;
 use graphql_parser::schema::{Definition, Document, TypeDefinition};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{trace, Instrument};
+use tracing::{instrument, trace, Instrument};
 
 use crate::mock_graph::MockGraph;
 use crate::schema;
@@ -19,17 +18,6 @@ struct SchemaLoaderInner {
     schema: GraphQL<async_graphql::dynamic::Schema>,
 }
 
-impl Debug for SchemaLoaderInner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SchemaLoaderInner")
-            .field("sdl", &self.sdl)
-            .field("path", &self.path)
-            .field("schema", &"xxx")
-            .finish()
-    }
-}
-
-#[derive(Debug)]
 pub struct SchemaLoader {
     schemas: RwLock<HashMap<String, SchemaLoaderInner>>,
     task_handle: RwLock<Option<JoinHandle<()>>>,
@@ -37,7 +25,6 @@ pub struct SchemaLoader {
     cancellation_token: CancellationToken,
 }
 
-#[derive(Debug)]
 pub struct SchemaLoaderHandle {
     rx: tokio::sync::broadcast::Receiver<String>,
     inner: Arc<SchemaLoader>,
@@ -77,6 +64,7 @@ impl SchemaLoader {
         Ok(handler)
     }
 
+    #[instrument(skip(self))]
     pub async fn reload_schema(self: &Arc<Self>, name: &str) -> anyhow::Result<()> {
         let path = {
             let schemas = self.schemas.read().await;

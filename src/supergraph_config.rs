@@ -8,6 +8,7 @@ use std::{
 use itertools::Itertools;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use tracing::instrument;
 
 use crate::schema_loader::SchemaLoaderHandle;
 
@@ -37,6 +38,7 @@ impl SupergraphConfig {
         }))
     }
 
+    #[instrument(skip(self))]
     pub async fn update_supergraph_config(self: &Arc<Self>) -> anyhow::Result<()> {
         // Create the output directory if it doesn't exist
         if let Some(parent) = self.output_path.parent() {

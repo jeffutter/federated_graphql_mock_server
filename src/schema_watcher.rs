@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     path::PathBuf,
     pin::Pin,
     sync::Arc,
@@ -44,23 +43,12 @@ pub struct SchemaWatcher {
 
 impl Clone for SchemaWatcher {
     fn clone(&self) -> Self {
-        let updates_rx = self._updates_rx.resubscribe();
-        let _updates_rx = self._updates_rx.resubscribe();
-        let stream = BroadcastStream::new(updates_rx);
+        let stream = BroadcastStream::new(self._updates_rx.resubscribe());
         Self {
             updates_stream: stream,
-            _updates_rx,
+            _updates_rx: self._updates_rx.resubscribe(),
             inner: self.inner.clone(),
         }
-    }
-}
-
-impl Debug for SchemaWatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SchemaWatcher")
-            .field("_watcher", &"xxx")
-            .field("updates_stream", &self.updates_stream)
-            .finish()
     }
 }
 

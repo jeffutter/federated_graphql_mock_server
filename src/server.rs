@@ -10,7 +10,7 @@ use tokio::{net::TcpListener, select};
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tower_service::Service;
-use tracing::{error, info, trace, Instrument};
+use tracing::{error, trace, Instrument};
 
 use crate::{
     schema_loader::{SchemaLoader, SchemaLoaderHandle},
@@ -42,29 +42,9 @@ pub async fn start_server(
     let mut watcher1 = watcher.clone();
     let task = tokio::spawn(async move {
         while let Ok(Some(name)) = watcher1.try_next().await {
-            info!("Schema reloading {}", name);
             schema_loader.reload_schema(&name).await?;
-            info!("Schema reloaded {}", name);
-
-            info!(
-                "Supergraph Config Writing to {}",
-                output_path.to_string_lossy()
-            );
             config_writer.update_supergraph_config().await?;
-            info!(
-                "Supergraph Config Written {}",
-                output_path.to_string_lossy()
-            );
-
-            info!(
-                "Supergraph Schema Composing {}",
-                graphql_path.to_string_lossy()
-            );
             compose.compose_supergraph_schema().await?;
-            info!(
-                "Supergraph Schema Composed {}",
-                graphql_path.to_string_lossy()
-            );
         }
 
         anyhow::Ok(())
@@ -134,9 +114,6 @@ pub async fn start_server(
             schema_loader_handle.close().await?;
         }
     }
-    // watcher.close().await;
-    // schema_loader_handle.close().await?;
-    // task.await??;
 
     Ok(())
 }
@@ -152,23 +129,20 @@ where
         .fold(Router::new(), move |router, subgraph_name| {
             let subgraph_name = subgraph_name.as_ref().to_string();
             let endpoint = format!("/{}", subgraph_name);
-            let endpoint_clone = endpoint.clone();
             let schema_loader_handle = schema_loader_handle.clone();
 
             router.route(
-                &endpoint,
-                get(|| async move { subgraph_graphiql(&endpoint_clone).await }).post_service(post(
-                    {
-                        move |req| {
-                            async move {
-                                let mut handler =
-                                    schema_loader_handle.get(&subgraph_name).await.unwrap();
-                                handler.call(req).await
-                            }
-                            .in_current_span()
+                &endpoint.clone(),
+                get(|| async move { subgraph_graphiql(&endpoint).await }).post_service(post({
+                    move |req| {
+                        async move {
+                            let mut handler =
+                                schema_loader_handle.get(&subgraph_name).await.unwrap();
+                            handler.call(req).await
                         }
-                    },
-                )),
+                        .in_current_span()
+                    }
+                })),
             )
         })
         .layer(TraceLayer::new_for_http())
