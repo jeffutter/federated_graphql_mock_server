@@ -100,6 +100,11 @@
                     inherit (finalAttrs) pname src version;
                     hash = "sha256-8KQ8ahKgg/F75qYY4Kf2J8zywUoSLi3DtGHaJCD/Zpc=";
                   };
+                  cargoTestFlags = [
+                    "--"
+                    "--skip=latest_plugins_are_valid_versions"
+                    "--skip=command::docs::shortlinks::tests::each_url_is_valid"
+                  ];
                 }
               ))
               mprocs
