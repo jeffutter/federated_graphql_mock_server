@@ -1,12 +1,14 @@
 mod mock_graph;
+mod scaffold;
 mod schema;
 mod schema_loader;
+mod schema_parser;
 mod schema_watcher;
 mod server;
 mod supergraph_compose;
 mod supergraph_config;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::{collections::HashMap, process::Termination};
@@ -26,15 +28,34 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     pretty_traces: bool,
 
-    #[arg(long, env = "PORT", default_value_t = 8080)]
-    port: usize,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// Schema files in the format subgraph=file_name.graphql
-    #[arg(short, long, value_parser = parse_key_val)]
-    schemas: Vec<(String, PathBuf)>,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Start the GraphQL server
+    Serve {
+        #[arg(long, env = "PORT", default_value_t = 8080)]
+        port: usize,
 
-    #[arg(short, long)]
-    output: PathBuf,
+        /// Schema files in the format subgraph=file_name.graphql
+        #[arg(short, long, value_parser = parse_key_val)]
+        schemas: Vec<(String, PathBuf)>,
+
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Scaffold a new GraphQL schema
+    Scaffold {
+        /// Proposal number to use for the schema
+        #[arg(short, long)]
+        proposal_number: u32,
+
+        /// Path to the folder where the schema will be created
+        #[arg()]
+        path: PathBuf,
+    },
 }
 
 /// Parse a key-value pair in the format "key=value"
@@ -72,17 +93,43 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     setup_tracing(&args);
 
-    let addr = format!("0.0.0.0:{}", args.port);
+    match &args.command {
+        Commands::Serve {
+            port,
+            schemas,
+            output,
+        } => {
+            let addr = format!("0.0.0.0:{}", port);
+            let schema_map: HashMap<String, PathBuf> = schemas.clone().into_iter().collect();
 
-    let schema_map: HashMap<String, PathBuf> = args.schemas.into_iter().collect();
+            let res = server::start_server(addr, schema_map, output.clone()).await;
 
-    let res = server::start_server(addr, schema_map, args.output).await;
-
-    if let Err(e) = res {
-        error!("Error starting server: {:?}", e);
-        ExitCode::FAILURE.report()
-    } else {
-        info!("Exiting");
-        ExitCode::SUCCESS.report()
+            if let Err(e) = res {
+                error!("Error starting server: {:?}", e);
+                ExitCode::FAILURE.report()
+            } else {
+                info!("Exiting");
+                ExitCode::SUCCESS.report()
+            }
+        }
+        Commands::Scaffold {
+            path,
+            proposal_number,
+        } => {
+            info!(
+                "Scaffolding schema at {:?} with proposal number {}",
+                path, proposal_number
+            );
+            match scaffold::scaffold_schema(path, *proposal_number).await {
+                Ok(_) => {
+                    info!("Schema scaffolding completed successfully");
+                    ExitCode::SUCCESS.report()
+                }
+                Err(e) => {
+                    error!("Error scaffolding schema: {:?}", e);
+                    ExitCode::FAILURE.report()
+                }
+            }
+        }
     }
 }

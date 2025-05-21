@@ -1,0 +1,24 @@
+query VariantQuery($variantRef: ID!) {
+  variant(ref: $variantRef) {
+    __typename
+    ... on GraphVariant {
+      id
+      isProposal
+      proposal {
+        id
+        status
+      }
+      subgraphs {
+        graphID
+        graphVariant
+        name
+        activePartialSchema {
+          sdl
+        }
+      }
+    }
+    ... on InvalidRefFormat {
+      message
+    }
+  }
+}

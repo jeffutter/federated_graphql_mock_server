@@ -11,6 +11,7 @@ use tracing::{instrument, trace, Instrument};
 
 use crate::mock_graph::MockGraph;
 use crate::schema;
+use crate::schema_parser;
 
 struct SchemaLoaderInner {
     sdl: String,
@@ -58,7 +59,7 @@ impl SchemaLoader {
             handler
                 .load_schema(name.to_string(), path)
                 .await
-                .with_context(|| format!("Subgraph: {name}"))?;
+                .with_context(|| format!("Failed to load schema - subgraph: {name}"))?;
         }
 
         Ok(handler)
@@ -137,12 +138,16 @@ impl SchemaLoaderHandle {
 fn load_schema_from_path(
     path: &PathBuf,
 ) -> anyhow::Result<(String, async_graphql::dynamic::Schema)> {
-    let input_sdl_str = std::fs::read_to_string(path)?;
+    let input_sdl_str = std::fs::read_to_string(path).context("Failed to read schema file")?;
     load_schema(input_sdl_str)
 }
 
 fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::dynamic::Schema)> {
-    let input_sdl: Document<&str> = graphql_parser::parse_schema(&input_sdl_str)?;
+    // Process the schema using our nom-based parser
+    let processed_sdl = schema_parser::process_schema(&input_sdl_str)?;
+
+    let input_sdl: Document<&str> =
+        graphql_parser::parse_schema(&processed_sdl).context("Failed to parse schema")?;
 
     let root_query_name = input_sdl
         .definitions
@@ -269,7 +274,7 @@ fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::
             )
         });
 
-    let schema = schema.finish()?;
+    let schema = schema.finish().context("Failed to build mock schema")?;
 
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
 

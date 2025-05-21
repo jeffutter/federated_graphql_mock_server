@@ -5,7 +5,8 @@ use std::{
     sync::Arc,
 };
 
-use tracing::{error, instrument};
+use anyhow::Context;
+use tracing::{error, info, instrument};
 
 pub struct SupergraphCompose {
     output_path: PathBuf,
@@ -27,14 +28,19 @@ impl SupergraphCompose {
             fs::create_dir_all(parent)?;
         }
 
+        let args = [
+            "supergraph",
+            "compose",
+            "--config",
+            &self.supergraph_path.to_string_lossy(),
+        ];
+
+        info!("Running: rover {}", args.join(" "));
+
         let x = Command::new("rover")
-            .args([
-                "supergraph",
-                "compose",
-                "--config",
-                &self.supergraph_path.to_string_lossy(),
-            ])
-            .output()?;
+            .args(args)
+            .output()
+            .context("Rover supergraph compose failed")?;
 
         if !x.status.success() {
             error!(
