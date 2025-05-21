@@ -85,12 +85,12 @@
               # rover
               (rover.overrideAttrs (
                 finalAttrs: prevAttrs: rec {
-                  version = "0.28.1";
+                  version = "0.31.0";
                   src = fetchFromGitHub {
                     owner = prevAttrs.src.owner;
                     repo = prevAttrs.src.repo;
                     rev = "v${version}";
-                    sha256 = "sha256-y+YtNV+Pzb9TxvZ9QpWNk0+qfjEy5TTMWUJMaACe3kI=";
+                    sha256 = "sha256-5EzH5BdJVifYuILULujXqPwhAjzoaStWrmpVeXYFizY=";
                   };
                   # cargoDeps = prevAttrs.cargoDeps.overrideAttrs (_: {
                   #   inherit src;
@@ -98,7 +98,7 @@
                   # });
                   cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
                     inherit (finalAttrs) pname src version;
-                    hash = "sha256-8KQ8ahKgg/F75qYY4Kf2J8zywUoSLi3DtGHaJCD/Zpc=";
+                    hash = "sha256-mMcy2MYSY5brHABwreNCpT64X/fY4AgAYzGkaAKPnmg=";
                   };
                   cargoTestFlags = [
                     "--"
