@@ -13,9 +13,7 @@ A development server for Apollo Federation that allows you to run and test Graph
 
 ## Installation
 
-```bash
-cargo install graphql-federation-dev
-```
+Download the latest release from the [GitHub releases page](https://github.com/jeffutter/federated_graphql_mock_server/releases) or build from source.
 
 ## Usage
 
@@ -23,10 +21,18 @@ The tool provides two main commands: `serve` and `scaffold`.
 
 ### Serve Command
 
-Run a local development server with multiple subgraphs:
+Run a local development server with multiple subgraphs, suitable for exposing to Apollo Router:
 
 ```bash
 graphql-federation-dev serve --schemas subgraph1=./schemas/subgraph1.graphql --schemas subgraph2=./schemas/subgraph2.graphql --output ./supergraph.graphql
+```
+
+#### Serve Composed Supergraph
+
+Once the server is running, it will automatically compose the supergraph schema from the provided subgraphs into the indicated file (`supergraph.graphql`). You can then launch Apollo Router against these mock subgraphs:
+
+```bash
+router -c router-config.yaml -s supergraph.graphql
 ```
 
 ### Scaffold Command
