@@ -3,9 +3,11 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
+use indicatif::ProgressBar;
 use tracing::{error, info, instrument};
 
 pub struct SupergraphCompose {
@@ -37,10 +39,18 @@ impl SupergraphCompose {
 
         info!("Running: rover {}", args.join(" "));
 
+        // Create a spinner to show progress
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_message("Rover is running...");
+        spinner.enable_steady_tick(Duration::from_millis(100));
+
         let x = Command::new("rover")
             .args(args)
             .output()
             .context("Rover supergraph compose failed")?;
+
+        // Finish the spinner
+        spinner.finish_and_clear();
 
         if !x.status.success() {
             error!(
