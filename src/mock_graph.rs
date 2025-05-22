@@ -65,10 +65,12 @@ pub enum MockTypeConfig {
     EnumRef(String),
     /// Reference to an interface
     InterfaceRef(String),
+    /// Reference to an interface selected from a predefined list
+    SelectInterfaceRef { selection: Vec<String> },
     /// Reference to a union
     UnionRef(String),
     /// Union Type selected from a predefined list
-    SelectRef { selection: Vec<String> },
+    SelectUnionRef { selection: Vec<String> },
 }
 
 /// Main struct for resolving mock GraphQL data
@@ -288,10 +290,14 @@ impl MockGraphBuilder {
                 if self.enums.contains_key(type_name) {
                     MockTypeConfig::EnumRef(type_name.to_string())
                 } else if self.interfaces.contains_key(type_name) {
-                    MockTypeConfig::InterfaceRef(type_name.to_string())
+                    if let Some(selection) = self.get_select_directive(directives) {
+                        MockTypeConfig::SelectInterfaceRef { selection }
+                    } else {
+                        MockTypeConfig::InterfaceRef(type_name.to_string())
+                    }
                 } else if self.unions.contains_key(type_name) {
                     if let Some(selection) = self.get_select_directive(directives) {
-                        MockTypeConfig::SelectRef { selection }
+                        MockTypeConfig::SelectUnionRef { selection }
                     } else {
                         MockTypeConfig::UnionRef(type_name.to_string())
                     }
@@ -565,8 +571,11 @@ impl MockGraph {
             MockTypeConfig::InterfaceRef(interface_name) => {
                 self.resolve_interface_obj(interface_name)
             }
+            MockTypeConfig::SelectInterfaceRef { selection } => selection
+                .choose(&mut rand::rng())
+                .and_then(|s| self.resolve_obj(s).map(|v| v.with_type(s.to_string()))),
             MockTypeConfig::UnionRef(union_name) => self.resolve_union_obj(union_name),
-            MockTypeConfig::SelectRef { selection } => selection
+            MockTypeConfig::SelectUnionRef { selection } => selection
                 .choose(&mut rand::rng())
                 .and_then(|s| self.resolve_obj(s).map(|v| v.with_type(s.to_string()))),
         }

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_graphql::{dynamic::*, Name, Value};
 use futures_core::stream::Stream;
 use graphql_parser::schema::{
@@ -10,7 +10,7 @@ use tracing::trace;
 
 use crate::mock_graph::MockGraph;
 
-const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values", "select"];
+const MOCK_DIRECTIVES: &[&str] = &["word", "listLength", "null", "values", "select", "count"];
 
 fn parser_value_to_query_value<'a>(
     v: impl Borrow<graphql_parser::query::Value<'a, &'a str>>,
@@ -340,7 +340,10 @@ pub fn register_object<'a>(
                         graphql_parser::query::Value::String(s) => Some(s),
                         _ => None,
                     })
-                    .unwrap();
+                    .context(format!(
+                        "Key not found on SourceObject: {}",
+                        source_object.name
+                    ))?;
 
                 let resolvable = arguments
                     .get("resolvable")
