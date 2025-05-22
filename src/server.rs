@@ -41,6 +41,9 @@ pub async fn start_server(
 
     let mut watcher1 = watcher.clone();
     let task = tokio::spawn(async move {
+        config_writer.update_supergraph_config().await?;
+        compose.compose_supergraph_schema().await?;
+
         while let Ok(Some(name)) = watcher1.try_next().await {
             schema_loader.reload_schema(&name).await?;
             config_writer.update_supergraph_config().await?;
