@@ -413,6 +413,11 @@ pub fn register_object<'a>(
                 })
             });
 
+            let field = match source_field.description.as_ref() {
+                Some(description) => field.description(description),
+                None => field,
+            };
+
             let field =
                 source_field
                     .arguments
