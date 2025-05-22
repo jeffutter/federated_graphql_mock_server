@@ -9,6 +9,7 @@ A development server for Apollo Federation that allows you to run and test Graph
 - Customizable mock data using directives
 - Real-time schema watching and reloading
 - Supergraph composition with Apollo Federation
+- Scaffold new GraphQL schemas from Apollo Studio
 
 ## Installation
 
@@ -18,18 +19,43 @@ cargo install graphql-federation-dev
 
 ## Usage
 
+The tool provides two main commands: `serve` and `scaffold`.
+
+### Serve Command
+
+Run a local development server with multiple subgraphs:
+
 ```bash
-graphql-federation-dev --schemas subgraph1=./schemas/subgraph1.graphql --schemas subgraph2=./schemas/subgraph2.graphql --output ./supergraph.graphql
+graphql-federation-dev serve --schemas subgraph1=./schemas/subgraph1.graphql --schemas subgraph2=./schemas/subgraph2.graphql --output ./supergraph.graphql
+```
+
+### Scaffold Command
+
+Generate a new GraphQL schema from an Apollo Studio proposal:
+
+```bash
+graphql-federation-dev scaffold --proposal-number 123 ./output-directory
 ```
 
 ### Command Line Options
 
+#### Global Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--pretty-traces` | Enable pretty-printed traces for debugging | false |
+
+#### Serve Command Options
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--schemas`, `-s` | Schema files in the format `subgraph=file_name.graphql` | Required |
 | `--output`, `-o` | Output path for the composed supergraph schema | Required |
 | `--port` | Port to run the server on | 8080 |
-| `--pretty-traces` | Enable pretty-printed traces for debugging | false |
+
+#### Scaffold Command Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--proposal-number`, `-p` | Apollo Studio proposal number | Required |
+| `path` | Path to the folder where the schema will be created | Required |
 
 ## Mock Data Directives
 
