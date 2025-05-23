@@ -198,7 +198,12 @@ pub fn register_enum<'a>(
         })?;
 
     let en = source_enum.values.iter().try_fold(en, |en, value| {
-        anyhow::Ok(en.item(EnumItem::new(value.name)))
+        let mut item = EnumItem::new(value.name);
+        if let Some(description) = value.description.as_ref() {
+            item = item.description(description);
+        }
+
+        anyhow::Ok(en.item(item))
     })?;
 
     Ok(schema.register(en))
