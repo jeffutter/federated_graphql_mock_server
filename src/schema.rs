@@ -110,15 +110,26 @@ pub fn register_interface<'a>(
         .try_fold(i, |i, source_field| {
             let field_type = map_type_to_typeref(&source_field.field_type);
 
-            let field = InterfaceField::new(source_field.name, field_type);
+            let mut field = InterfaceField::new(source_field.name, field_type);
+
+            if let Some(description) = source_field.description.as_ref() {
+                field = field.description(description);
+            }
 
             let field = source_field.arguments.clone().into_iter().try_fold(
                 field,
                 |f, source_argument| {
-                    let argument = InputValue::new(
+                    let mut argument = InputValue::new(
                         source_argument.name,
                         map_type_to_typeref(&source_argument.value_type),
                     );
+                    if let Some(description) = source_argument.description.as_ref() {
+                        argument = argument.description(description);
+                    }
+                    if let Some(default_value) = source_argument.default_value.as_ref() {
+                        argument =
+                            argument.default_value(parser_value_to_query_value(default_value));
+                    }
                     let argument = source_argument
                         .directives
                         .into_iter()
@@ -136,6 +147,21 @@ pub fn register_interface<'a>(
                     anyhow::Ok(f.argument(argument))
                 },
             )?;
+
+            let field =
+                source_field
+                    .directives
+                    .iter()
+                    .try_fold(field, |field, source_directive| {
+                        let directive = source_directive.arguments.iter().fold(
+                            Directive::new(source_directive.name),
+                            |d, (k, v)| {
+                                let v = parser_value_to_query_value(v);
+                                d.argument(*k, v)
+                            },
+                        );
+                        anyhow::Ok(field.directive(directive))
+                    })?;
 
             anyhow::Ok(i.field(field))
         })?;
@@ -202,6 +228,19 @@ pub fn register_enum<'a>(
         if let Some(description) = value.description.as_ref() {
             item = item.description(description);
         }
+        let item = value
+            .directives
+            .iter()
+            .try_fold(item, |item, source_directive| {
+                let directive = source_directive.arguments.iter().fold(
+                    Directive::new(source_directive.name),
+                    |d, (k, v)| {
+                        let v = parser_value_to_query_value(v);
+                        d.argument(*k, v)
+                    },
+                );
+                anyhow::Ok(item.directive(directive))
+            })?;
 
         anyhow::Ok(en.item(item))
     })?;
@@ -232,10 +271,20 @@ pub fn register_input_object<'a>(
             anyhow::Ok(i.directive(directive))
         })?;
 
-    let i = source_input_object.fields.iter().try_fold(i, |i, field| {
-        let field_type = map_type_to_typeref(&field.value_type);
-        anyhow::Ok(i.field(InputValue::new(field.name, field_type)))
-    })?;
+    let i = source_input_object
+        .fields
+        .iter()
+        .try_fold(i, |i, source_field| {
+            let field_type = map_type_to_typeref(&source_field.value_type);
+            let mut input_value = InputValue::new(source_field.name, field_type);
+            if let Some(description) = source_field.description.as_ref() {
+                input_value = input_value.description(description);
+            }
+            if let Some(default_value) = source_field.default_value.as_ref() {
+                input_value = input_value.default_value(parser_value_to_query_value(default_value));
+            }
+            anyhow::Ok(i.field(input_value))
+        })?;
 
     Ok(schema.register(i))
 }
@@ -428,10 +477,17 @@ pub fn register_object<'a>(
                     .arguments
                     .into_iter()
                     .try_fold(field, |f, source_argument| {
-                        let argument = InputValue::new(
+                        let mut argument = InputValue::new(
                             source_argument.name,
                             map_type_to_typeref(&source_argument.value_type),
                         );
+                        if let Some(description) = source_argument.description.as_ref() {
+                            argument = argument.description(description);
+                        }
+                        if let Some(default_value) = source_argument.default_value.as_ref() {
+                            argument =
+                                argument.default_value(parser_value_to_query_value(default_value));
+                        }
                         let argument = source_argument
                             .directives
                             .into_iter()
