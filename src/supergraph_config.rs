@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tracing::instrument;
 
-use crate::schema_loader::SchemaLoaderHandle;
+use crate::{schema_loader::SchemaLoaderHandle, supergraph_compose};
 
 pub struct SupergraphConfig {
     addr: String,
@@ -64,34 +64,14 @@ impl SupergraphConfig {
             fs::write(&schema_file_path, subgraph_sdl)?;
 
             // Store the relative path for the YAML config
-            subgraph_schema_files.insert(subgraph_name, schema_file_path);
+            subgraph_schema_files.insert(subgraph_name.to_string(), schema_file_path);
         }
 
-        // Generate the supergraph.yaml content
-        let mut yaml_content = String::from("federation_version: =2.7.8\nsubgraphs:\n");
-
-        for (subgraph_name, schema_file_path) in subgraph_schema_files
-            .into_iter()
-            .sorted_by_key(|(name, _)| name.to_owned())
-        {
-            let routing_url = format!(
-                "http://{}:{}/{}",
-                self.addr.split(':').next().unwrap_or("localhost"),
-                self.addr.split(':').nth(1).unwrap_or("8080"),
-                subgraph_name
-            );
-
-            yaml_content.push_str(&format!("  {}:\n", subgraph_name));
-            yaml_content.push_str(&format!("    routing_url: {}\n", routing_url));
-            yaml_content.push_str("    schema:\n");
-            yaml_content.push_str(&format!(
-                "      file: {}\n",
-                schema_file_path.to_string_lossy()
-            ));
-        }
-
-        // Write the supergraph.yaml file
-        fs::write(self.output_path.clone(), yaml_content)?;
+        let _ = supergraph_compose::compose_from_schemas(
+            &subgraph_schema_files,
+            &self.output_path,
+            Some(&self.addr),
+        )?;
 
         Ok(())
     }

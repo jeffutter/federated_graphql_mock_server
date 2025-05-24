@@ -16,7 +16,7 @@ use crate::{
     schema_loader::{SchemaLoader, SchemaLoaderHandle},
     schema_watcher::SchemaWatcher,
 };
-use crate::{supergraph_compose::SupergraphCompose, supergraph_config::SupergraphConfig};
+use crate::{supergraph_compose, supergraph_config::SupergraphConfig};
 
 async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse + use<> {
     response::Html(GraphiQLSource::build().endpoint(endpoint).finish())
@@ -37,17 +37,15 @@ pub async fn start_server(
     let mut graphql_path = output_path.clone();
     graphql_path.set_extension("graphql");
 
-    let compose = SupergraphCompose::new(&output_path, &graphql_path)?;
-
     let mut watcher1 = watcher.clone();
     let task = tokio::spawn(async move {
         config_writer.update_supergraph_config().await?;
-        compose.compose_supergraph_schema().await?;
+        let _ = supergraph_compose::run_rover_compose(&output_path, &graphql_path)?;
 
         while let Ok(Some(name)) = watcher1.try_next().await {
             schema_loader.reload_schema(&name).await?;
             config_writer.update_supergraph_config().await?;
-            compose.compose_supergraph_schema().await?;
+            let _ = supergraph_compose::run_rover_compose(&output_path, &graphql_path)?;
         }
 
         anyhow::Ok(())

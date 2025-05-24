@@ -1,4 +1,5 @@
 mod mock_graph;
+mod new_project;
 mod scaffold;
 mod schema;
 mod schema_loader;
@@ -55,6 +56,16 @@ enum Commands {
         /// Path to the folder where the schema will be created
         #[arg()]
         path: PathBuf,
+    },
+    /// Create a new federated GraphQL project
+    New {
+        /// Path to the folder where the project will be created
+        #[arg()]
+        path: PathBuf,
+
+        /// Names of subgraphs to create
+        #[arg(short, long)]
+        subgraph: Vec<String>,
     },
 }
 
@@ -127,6 +138,22 @@ async fn main() -> ExitCode {
                 }
                 Err(e) => {
                     error!("Error scaffolding schema: {:?}", e);
+                    ExitCode::FAILURE.report()
+                }
+            }
+        }
+        Commands::New { path, subgraph } => {
+            info!(
+                "Creating new project at {:?} with subgraphs: {:?}",
+                path, subgraph
+            );
+            match new_project::create_new_project(path, subgraph).await {
+                Ok(_) => {
+                    info!("Project created successfully");
+                    ExitCode::SUCCESS.report()
+                }
+                Err(e) => {
+                    error!("Error creating project: {:?}", e);
                     ExitCode::FAILURE.report()
                 }
             }

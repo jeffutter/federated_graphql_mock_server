@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::schema_loader::SchemaLoader;
-use crate::supergraph_compose::SupergraphCompose;
+use crate::supergraph_compose;
 use crate::supergraph_config::SupergraphConfig;
 
 // Define the GraphQL query structure
@@ -107,11 +107,9 @@ pub async fn scaffold_schema(path: &PathBuf, proposal_number: u32) -> Result<()>
             let mut graphql_path = output_path.clone();
             graphql_path.set_extension("graphql");
 
-            let compose = SupergraphCompose::new(&output_path, &graphql_path)
-                .context("SupergraphCompose Failed")?;
-
             config_writer.update_supergraph_config().await?;
-            compose.compose_supergraph_schema().await?;
+            let _ = supergraph_compose::run_rover_compose(&output_path, &graphql_path)
+                .context("SupergraphCompose Failed")?;
 
             info!("Successfully scaffolded {} subgraph schemas", count);
             Ok(())
