@@ -50,6 +50,116 @@ fn map_type_to_typeref<'a>(ty: &graphql_parser::query::Type<'a, &'a str>) -> Typ
     }
 }
 
+/// Trait for types that can have directives applied to them
+pub trait ApplyDirective {
+    /// Apply a directive to this type
+    fn apply_directive(self, directive: async_graphql::dynamic::Directive) -> Self;
+}
+
+pub trait ApplyDirectives: ApplyDirective {
+    fn apply_directives<'a>(
+        self,
+        directives: &Vec<graphql_parser::schema::Directive<'a, &'a str>>,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        let result = directives
+            .iter()
+            .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+            // Exclude key directives from all types, Objects will handle it separately
+            .filter(|d| d.name != "key")
+            .fold(self, |s, source_directive| {
+                let directive = source_directive.arguments.iter().fold(
+                    Directive::new(source_directive.name),
+                    |d, (k, v)| {
+                        let v = parser_value_to_query_value(v);
+                        d.argument(*k, v)
+                    },
+                );
+                s.apply_directive(directive)
+            });
+
+        result
+    }
+}
+
+macro_rules! impl_apply_directives {
+    ($($t:ty),*) => {
+        $(
+            impl ApplyDirective for $t {
+                fn apply_directive(self, directive: async_graphql::dynamic::Directive) -> Self {
+                    self.directive(directive)
+                }
+            }
+
+            impl ApplyDirectives for $t {}
+        )*
+    };
+}
+
+// Implement for types that have a directive method
+impl_apply_directives!(
+    Scalar,
+    Interface,
+    Union,
+    Enum,
+    InputObject,
+    Object,
+    EnumItem,
+    InputValue,
+    Field,
+    InterfaceField
+);
+
+pub trait ApplyArgument {
+    fn apply_argument(self, directive: async_graphql::dynamic::InputValue) -> Self;
+}
+
+pub trait ApplyArguments: ApplyArgument {
+    fn apply_arguments<'a>(
+        self,
+        arguments: &Vec<graphql_parser::schema::InputValue<'a, &'a str>>,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        let result = arguments.iter().fold(self, |f, source_argument| {
+            let mut argument = InputValue::new(
+                source_argument.name,
+                map_type_to_typeref(&source_argument.value_type),
+            );
+            if let Some(description) = source_argument.description.as_ref() {
+                argument = argument.description(description);
+            }
+            if let Some(default_value) = source_argument.default_value.as_ref() {
+                argument = argument.default_value(parser_value_to_query_value(default_value));
+            }
+            let argument = argument.apply_directives(&source_argument.directives);
+            f.apply_argument(argument)
+        });
+
+        result
+    }
+}
+
+macro_rules! impl_apply_arguments {
+    ($($t:ty),*) => {
+        $(
+            impl ApplyArgument for $t {
+                fn apply_argument(self, argument: async_graphql::dynamic::InputValue) -> Self {
+                    self.argument(argument)
+                }
+            }
+
+            impl ApplyArguments for $t {}
+        )*
+    };
+}
+
+// Implement for types that have a directive method
+impl_apply_arguments!(Field, InterfaceField);
+
 pub fn register_scalar<'a>(
     schema: SchemaBuilder,
     source_scalar: &'a ScalarType<&'a str>,
@@ -59,19 +169,7 @@ pub fn register_scalar<'a>(
         s = s.description(description);
     }
 
-    let s = source_scalar
-        .directives
-        .iter()
-        .try_fold(s, |s, source_directive| {
-            let directive = source_directive.arguments.iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
-                },
-            );
-            anyhow::Ok(s.directive(directive))
-        })?;
+    let s = s.apply_directives(&source_scalar.directives);
 
     Ok(schema.register(s))
 }
@@ -85,86 +183,28 @@ pub fn register_interface<'a>(
         i = i.description(description);
     }
 
-    let i = source_interface
-        .directives
-        .iter()
-        .try_fold(i, |i, source_directive| {
-            let directive = source_directive.arguments.iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
-                },
-            );
-            anyhow::Ok(i.directive(directive))
-        })?;
+    let i = i.apply_directives(&source_interface.directives);
 
     let i = source_interface
         .implements_interfaces
         .iter()
-        .try_fold(i, |i, interface| anyhow::Ok(i.implement(*interface)))?;
+        .fold(i, |i, interface| i.implement(*interface));
 
-    let i = source_interface
-        .fields
-        .iter()
-        .try_fold(i, |i, source_field| {
-            let field_type = map_type_to_typeref(&source_field.field_type);
+    let i = source_interface.fields.iter().fold(i, |i, source_field| {
+        let field_type = map_type_to_typeref(&source_field.field_type);
 
-            let mut field = InterfaceField::new(source_field.name, field_type);
+        let mut field = InterfaceField::new(source_field.name, field_type);
 
-            if let Some(description) = source_field.description.as_ref() {
-                field = field.description(description);
-            }
+        if let Some(description) = source_field.description.as_ref() {
+            field = field.description(description);
+        }
 
-            let field = source_field.arguments.clone().into_iter().try_fold(
-                field,
-                |f, source_argument| {
-                    let mut argument = InputValue::new(
-                        source_argument.name,
-                        map_type_to_typeref(&source_argument.value_type),
-                    );
-                    if let Some(description) = source_argument.description.as_ref() {
-                        argument = argument.description(description);
-                    }
-                    if let Some(default_value) = source_argument.default_value.as_ref() {
-                        argument =
-                            argument.default_value(parser_value_to_query_value(default_value));
-                    }
-                    let argument = source_argument
-                        .directives
-                        .into_iter()
-                        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                        .try_fold(argument, |a, source_directive| {
-                            let d = source_directive.arguments.into_iter().fold(
-                                Directive::new(source_directive.name),
-                                |d, (k, v)| {
-                                    let v = parser_value_to_query_value(v);
-                                    d.argument(k, v)
-                                },
-                            );
-                            anyhow::Ok(a.directive(d))
-                        })?;
-                    anyhow::Ok(f.argument(argument))
-                },
-            )?;
+        let field = field.apply_arguments(&source_field.arguments);
 
-            let field =
-                source_field
-                    .directives
-                    .iter()
-                    .try_fold(field, |field, source_directive| {
-                        let directive = source_directive.arguments.iter().fold(
-                            Directive::new(source_directive.name),
-                            |d, (k, v)| {
-                                let v = parser_value_to_query_value(v);
-                                d.argument(*k, v)
-                            },
-                        );
-                        anyhow::Ok(field.directive(directive))
-                    })?;
+        let field = field.apply_directives(&source_field.directives);
 
-            anyhow::Ok(i.field(field))
-        })?;
+        i.field(field)
+    });
 
     Ok(schema.register(i))
 }
@@ -178,24 +218,12 @@ pub fn register_union<'a>(
         u = u.description(description);
     }
 
-    let u = source_union
-        .directives
-        .iter()
-        .try_fold(u, |u, source_directive| {
-            let directive = source_directive.arguments.iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
-                },
-            );
-            anyhow::Ok(u.directive(directive))
-        })?;
+    let u = u.apply_directives(&source_union.directives);
 
     let u = source_union
         .types
         .iter()
-        .try_fold(u, |u, ut| anyhow::Ok(u.possible_type(*ut)))?;
+        .fold(u, |u, ut| u.possible_type(*ut));
 
     Ok(schema.register(u))
 }
@@ -209,41 +237,17 @@ pub fn register_enum<'a>(
         en = en.description(description);
     }
 
-    let en = source_enum
-        .directives
-        .iter()
-        .try_fold(en, |en, source_directive| {
-            let directive = source_directive.arguments.iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
-                },
-            );
-            anyhow::Ok(en.directive(directive))
-        })?;
+    let en = en.apply_directives(&source_enum.directives);
 
-    let en = source_enum.values.iter().try_fold(en, |en, value| {
+    let en = source_enum.values.iter().fold(en, |en, value| {
         let mut item = EnumItem::new(value.name);
         if let Some(description) = value.description.as_ref() {
             item = item.description(description);
         }
-        let item = value
-            .directives
-            .iter()
-            .try_fold(item, |item, source_directive| {
-                let directive = source_directive.arguments.iter().fold(
-                    Directive::new(source_directive.name),
-                    |d, (k, v)| {
-                        let v = parser_value_to_query_value(v);
-                        d.argument(*k, v)
-                    },
-                );
-                anyhow::Ok(item.directive(directive))
-            })?;
+        let item = item.apply_directives(&value.directives);
 
-        anyhow::Ok(en.item(item))
-    })?;
+        en.item(item)
+    });
 
     Ok(schema.register(en))
 }
@@ -257,24 +261,12 @@ pub fn register_input_object<'a>(
         i = i.description(description);
     }
 
-    let i = source_input_object
-        .directives
-        .iter()
-        .try_fold(i, |i, source_directive| {
-            let directive = source_directive.arguments.iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(*k, v)
-                },
-            );
-            anyhow::Ok(i.directive(directive))
-        })?;
+    let i = i.apply_directives(&source_input_object.directives);
 
     let i = source_input_object
         .fields
         .iter()
-        .try_fold(i, |i, source_field| {
+        .fold(i, |i, source_field| {
             let field_type = map_type_to_typeref(&source_field.value_type);
             let mut input_value = InputValue::new(source_field.name, field_type);
             if let Some(description) = source_field.description.as_ref() {
@@ -283,8 +275,8 @@ pub fn register_input_object<'a>(
             if let Some(default_value) = source_field.default_value.as_ref() {
                 input_value = input_value.default_value(parser_value_to_query_value(default_value));
             }
-            anyhow::Ok(i.field(input_value))
-        })?;
+            i.field(input_value)
+        });
 
     Ok(schema.register(i))
 }
@@ -375,66 +367,57 @@ pub fn register_object<'a>(
         o = o.description(description);
     }
 
+    // Apply all directives other than 'key'
+    let o = o.apply_directives(&source_object.directives);
+
+    // handle the 'key' directive
     let o = source_object
         .directives
         .into_iter()
-        .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
+        .filter(|d| d.name == "key")
         .try_fold(o, |o, source_directive| {
-            if source_directive.name == "key" {
-                let arguments: HashMap<String, graphql_parser::query::Value<'_, &str>> =
-                    source_directive
-                        .arguments
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.clone()))
-                        .collect();
+            let arguments: HashMap<String, graphql_parser::query::Value<'_, &str>> =
+                source_directive
+                    .arguments
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect();
 
-                let key_fields = arguments
-                    .get("fields")
-                    .and_then(|fields| match fields {
-                        graphql_parser::query::Value::String(s) => Some(s),
-                        _ => None,
-                    })
-                    .context(format!(
-                        "Key not found on SourceObject: {}",
-                        source_object.name
-                    ))?;
+            let key_fields = arguments
+                .get("fields")
+                .and_then(|fields| match fields {
+                    graphql_parser::query::Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .context(format!(
+                    "Key not found on SourceObject: {}",
+                    source_object.name
+                ))?;
 
-                let resolvable = arguments
-                    .get("resolvable")
-                    .and_then(|resolvable| match resolvable {
-                        graphql_parser::query::Value::Boolean(b) => Some(*b),
-                        _ => None,
-                    })
-                    .unwrap_or(true);
+            let resolvable = arguments
+                .get("resolvable")
+                .and_then(|resolvable| match resolvable {
+                    graphql_parser::query::Value::Boolean(b) => Some(*b),
+                    _ => None,
+                })
+                .unwrap_or(true);
 
-                let o = if resolvable {
-                    o.key(key_fields)
-                } else {
-                    o.unresolvable(key_fields)
-                };
-
-                return anyhow::Ok(o);
+            if resolvable {
+                anyhow::Ok(o.key(key_fields))
+            } else {
+                anyhow::Ok(o.unresolvable(key_fields))
             }
-
-            let directive = source_directive.arguments.into_iter().fold(
-                Directive::new(source_directive.name),
-                |d, (k, v)| {
-                    let v = parser_value_to_query_value(v);
-                    d.argument(k.to_string(), v)
-                },
-            );
-            Ok(o.directive(directive))
         })?;
 
     let o = source_object
         .implements_interfaces
         .iter()
-        .try_fold(o, |o, interface| anyhow::Ok(o.implement(*interface)))?;
+        .fold(o, |o, interface| o.implement(*interface));
 
     let o = source_object
         .fields
         .into_iter()
-        .try_fold(o, |object, source_field| {
+        .fold(o, |object, source_field| {
             let field_type = map_type_to_typeref(&source_field.field_type);
 
             let source_object_name = source_object.name.to_string();
@@ -472,56 +455,12 @@ pub fn register_object<'a>(
                 None => field,
             };
 
-            let field =
-                source_field
-                    .arguments
-                    .into_iter()
-                    .try_fold(field, |f, source_argument| {
-                        let mut argument = InputValue::new(
-                            source_argument.name,
-                            map_type_to_typeref(&source_argument.value_type),
-                        );
-                        if let Some(description) = source_argument.description.as_ref() {
-                            argument = argument.description(description);
-                        }
-                        if let Some(default_value) = source_argument.default_value.as_ref() {
-                            argument =
-                                argument.default_value(parser_value_to_query_value(default_value));
-                        }
-                        let argument = source_argument
-                            .directives
-                            .into_iter()
-                            .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                            .try_fold(argument, |a, source_directive| {
-                                let d = source_directive.arguments.into_iter().fold(
-                                    Directive::new(source_directive.name),
-                                    |d, (k, v)| {
-                                        let v = parser_value_to_query_value(v);
-                                        d.argument(k, v)
-                                    },
-                                );
-                                anyhow::Ok(a.directive(d))
-                            })?;
-                        anyhow::Ok(f.argument(argument))
-                    })?;
+            let field = field.apply_arguments(&source_field.arguments);
 
-            let field = source_field
-                .directives
-                .into_iter()
-                .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
-                .try_fold(field, |f, source_directive| {
-                    let d = source_directive.arguments.into_iter().fold(
-                        Directive::new(source_directive.name),
-                        |d, (k, v)| {
-                            let v = parser_value_to_query_value(v);
-                            d.argument(k, v)
-                        },
-                    );
-                    anyhow::Ok(f.directive(d))
-                })?;
+            let field = field.apply_directives(&source_field.directives);
 
-            anyhow::Ok(object.field(field))
-        })?;
+            object.field(field)
+        });
 
     let res = schema.register(o);
 
