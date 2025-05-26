@@ -9,7 +9,7 @@ A development server for Apollo Federation that allows you to run and test Graph
 - Customizable mock data using directives
 - Real-time schema watching and reloading
 - Supergraph composition with Apollo Federation
-- Scaffold new GraphQL schemas from Apollo Studio
+- Fetch new GraphQL schemas from Apollo Studio
 
 ## Installation
 
@@ -17,7 +17,7 @@ Download the latest release from the [GitHub releases page](https://github.com/j
 
 ## Usage
 
-The tool provides two main commands: `serve` and `scaffold`.
+The tool provides two main commands: `serve` and `fetch`.
 
 ### Serve Command
 
@@ -35,12 +35,22 @@ Once the server is running, it will automatically compose the supergraph schema 
 router -c router-config.yaml -s supergraph.graphql
 ```
 
-### Scaffold Command
+### New Command
+
+Create a new federated GraphQL project with multiple subgraphs:
+
+```bash
+graphql-federation-dev new ./my-project --subgraph users --subgraph products
+```
+
+This will create a new project directory with basic schema files for each specified subgraph.
+
+### Fetch Command
 
 Generate a new GraphQL schema from an Apollo Studio proposal:
 
 ```bash
-graphql-federation-dev scaffold --proposal-number 123 ./output-directory
+graphql-federation-dev fetch --proposal-number 123 ./output-directory
 ```
 
 ### Command Line Options
@@ -57,7 +67,13 @@ graphql-federation-dev scaffold --proposal-number 123 ./output-directory
 | `--output`, `-o` | Output path for the composed supergraph schema | Required |
 | `--port` | Port to run the server on | 8080 |
 
-#### Scaffold Command Options
+#### New Command Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--subgraph`, `-s` | Names of subgraphs to create | Required |
+| `path` | Path to the folder where the project will be created | Required |
+
+#### Fetch Command Options
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--proposal-number`, `-p` | Apollo Studio proposal number | Required |

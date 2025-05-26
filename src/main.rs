@@ -1,6 +1,6 @@
+mod fetch;
 mod mock_graph;
 mod new_project;
-mod scaffold;
 mod schema;
 mod schema_loader;
 mod schema_parser;
@@ -47,8 +47,8 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Scaffold a new GraphQL schema
-    Scaffold {
+    /// Fetch a new GraphQL schema
+    Fetch {
         /// Proposal number to use for the schema
         #[arg(short, long)]
         proposal_number: u32,
@@ -123,21 +123,21 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS.report()
             }
         }
-        Commands::Scaffold {
+        Commands::Fetch {
             path,
             proposal_number,
         } => {
             info!(
-                "Scaffolding schema at {:?} with proposal number {}",
+                "Fetching schema at {:?} with proposal number {}",
                 path, proposal_number
             );
-            match scaffold::scaffold_schema(path, *proposal_number).await {
+            match fetch::fetch_schema(path, *proposal_number).await {
                 Ok(_) => {
-                    info!("Schema scaffolding completed successfully");
+                    info!("Schema fetching completed successfully");
                     ExitCode::SUCCESS.report()
                 }
                 Err(e) => {
-                    error!("Error scaffolding schema: {:?}", e);
+                    error!("Error fetching schema: {:?}", e);
                     ExitCode::FAILURE.report()
                 }
             }

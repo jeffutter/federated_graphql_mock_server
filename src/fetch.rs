@@ -19,7 +19,7 @@ use crate::supergraph_config::SupergraphConfig;
 )]
 pub struct VariantQuery;
 
-pub async fn scaffold_schema(path: &PathBuf, proposal_number: u32) -> Result<()> {
+pub async fn fetch_schema(path: &PathBuf, proposal_number: u32) -> Result<()> {
     let apollo_key = std::env::var("APOLLO_KEY").context("Missing ENV Var APOLLO_KEY")?;
     // Create directory if it doesn't exist
     fs::create_dir_all(path).context("Failed to create output directory")?;
@@ -111,7 +111,7 @@ pub async fn scaffold_schema(path: &PathBuf, proposal_number: u32) -> Result<()>
             let _ = supergraph_compose::run_rover_compose(&output_path, &graphql_path)
                 .context("SupergraphCompose Failed")?;
 
-            info!("Successfully scaffolded {} subgraph schemas", count);
+            info!("Successfully fetched {} subgraph schemas", count);
             Ok(())
         }
         Some(variant_query::VariantQueryVariant::InvalidRefFormat(error)) => {
