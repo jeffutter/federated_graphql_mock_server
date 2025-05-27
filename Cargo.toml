@@ -37,7 +37,7 @@ tower-service = "0.3.3"
 tracing = { version = "0.1.40", features = ["release_max_level_info"] }
 tracing-forest = { version = "0.1.6", features = ["chrono", "ansi", "tokio", "smallvec"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-uuid = { version = "1.7.0", features = ["v4"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 futures = "0.3.31"
 tokio-util = "0.7.15"
