@@ -10,7 +10,7 @@ repository = "https://github.com/jeffutter/federated_graphql_mock_server"
 [dependencies]
 anyhow = "1.0.97"
 sha2 = "0.10.8"
-tempfile = "3.10.1"
+tempfile = "3.20.0"
 async-graphql = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { path = "../async-graphql/", features = ["dynamic-schema", "tracing"] }
