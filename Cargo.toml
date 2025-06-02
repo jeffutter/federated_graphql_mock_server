@@ -19,7 +19,7 @@ async-graphql-axum = { git = "https://github.com/jeffutter/async-graphql.git", b
 # async-graphql-axum = { path = "../async-graphql/integrations/axum" }
 async-stream = "0.3.6"
 axum = "0.8.1"
-clap = { version = "4.5.0", features = ["derive", "env", "cargo"] }
+clap = { version = "4.5.39", features = ["derive", "env", "cargo"] }
 fake = { version = "4.2.0", features = ["uuid"] }
 futures-core = "0.3.31"
 graphql_client = "0.14.0"
