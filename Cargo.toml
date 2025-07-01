@@ -24,7 +24,7 @@ fake = { version = "4.2.0", features = ["uuid"] }
 futures-core = "0.3.31"
 graphql_client = "0.14.0"
 graphql-parser = "0.4.1"
-indexmap = "2.8.0"
+indexmap = "2.10.0"
 mimalloc = { version = "0.1.39" }
 notify = "8.0.0"
 petgraph = "0.8.1"
