@@ -16,7 +16,7 @@
       };
     };
     apollo-router = {
-      url = "github:jeffutter/apollo-router-flake/v1.61.4";
+      url = "github:jeffutter/apollo-router-flake/v2.12.1";
     };
   };
 

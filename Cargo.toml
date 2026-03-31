@@ -1,7 +1,7 @@
 [package]
 name = "federated_graphql_mock_server"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 description = "GraphQLserver genrator with mock data"
 repository = "https://github.com/jeffutter/federated_graphql_mock_server"
 
@@ -9,7 +9,7 @@ repository = "https://github.com/jeffutter/federated_graphql_mock_server"
 
 [dependencies]
 anyhow = "1.0.97"
-sha2 = "0.10.8"
+sha2 = "0.11.0"
 tempfile = "3.10.1"
 async-graphql = { git = "https://github.com/jeffutter/async-graphql.git", branch = "allow-dynamic-schema-subtypes", features = ["dynamic-schema", "tracing"] }
 # async-graphql = { version = "7.0.16", features = ["dynamic-schema", "tracing"] }
@@ -20,22 +20,22 @@ async-graphql-axum = { git = "https://github.com/jeffutter/async-graphql.git", b
 async-stream = "0.3.6"
 axum = "0.8.1"
 clap = { version = "4.5.0", features = ["derive", "env", "cargo"] }
-fake = { version = "4.2.0", features = ["uuid"] }
+fake = { version = "5.1.0", features = ["uuid"] }
 futures-core = "0.3.31"
-graphql_client = "0.14.0"
+graphql_client = "0.16.0"
 graphql-parser = "0.4.1"
 indexmap = "2.8.0"
 mimalloc = { version = "0.1.39" }
 notify = "8.0.0"
 petgraph = "0.8.1"
-rand = "0.9.0"
-reqwest = { version = "0.12.15", default-features = false, features = ["charset", "http2", "macos-system-configuration", "json", "rustls-tls"] }
+rand = "0.10.0"
+reqwest = { version = "0.13.2", default-features = false, features = ["charset", "http2", "json", "rustls"] }
 serde_json = "1.0.114"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "signal"] }
 tower-http = { version = "0.6.2", features = ["trace"] }
 tower-service = "0.3.3"
 tracing = { version = "0.1.40", features = ["release_max_level_info"] }
-tracing-forest = { version = "0.1.6", features = ["chrono", "ansi", "tokio", "smallvec"] }
+tracing-forest = { version = "0.3.1", features = ["chrono", "ansi", "tokio", "smallvec"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 uuid = { version = "1.7.0", features = ["v4"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
@@ -43,9 +43,9 @@ futures = "0.3.31"
 tokio-util = "0.7.15"
 itertools = "0.14.0"
 serde = "1.0.219"
-rand_distr = "0.5.1"
+rand_distr = "0.6.0"
 nom = "8.0.0"
-indicatif = "0.17.11"
+indicatif = "0.18.4"
 serde_yaml = "0.9.34"
 
 [profile.release]

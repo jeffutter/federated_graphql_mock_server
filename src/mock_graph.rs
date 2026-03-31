@@ -11,6 +11,7 @@ use graphql_parser::schema::{
 };
 use indexmap::IndexMap;
 use rand::prelude::IndexedRandom;
+use rand::RngExt;
 use uuid::Uuid;
 
 /// Represents a field in a GraphQL schema with its mock configuration
@@ -415,7 +416,7 @@ impl MockGraph {
     }
 
     /// Resolve a field for a given object type
-    pub fn resolve_field(&self, obj_type: &str, field_name: &str) -> Option<FieldValue> {
+    pub fn resolve_field(&self, obj_type: &str, field_name: &str) -> Option<FieldValue<'_>> {
         if self.interfaces.contains_key(obj_type) {
             return self.resolve_interface_field(obj_type, field_name);
         } else if self.unions.contains_key(obj_type) {
@@ -434,7 +435,7 @@ impl MockGraph {
         &self,
         interface_type: &str,
         field_name: &str,
-    ) -> Option<FieldValue> {
+    ) -> Option<FieldValue<'_>> {
         // Get a random implementing type
         let implementers = self.interfaces.get(interface_type)?;
         if implementers.is_empty() {
@@ -446,7 +447,7 @@ impl MockGraph {
     }
 
     /// Resolve a complete object
-    pub fn resolve_obj(&self, obj_type: &str) -> Option<FieldValue> {
+    pub fn resolve_obj(&self, obj_type: &str) -> Option<FieldValue<'_>> {
         // trace!("Resolving object: {}", obj_type);
 
         // Pop the path when we're done with this object
@@ -472,7 +473,7 @@ impl MockGraph {
     }
 
     /// Resolve an interface
-    fn resolve_interface_obj(&self, interface_type: &str) -> Option<FieldValue> {
+    fn resolve_interface_obj(&self, interface_type: &str) -> Option<FieldValue<'_>> {
         let implementers = self.interfaces.get(interface_type)?;
         if implementers.is_empty() {
             return None;
@@ -484,7 +485,7 @@ impl MockGraph {
     }
 
     /// Resolve a union
-    fn resolve_union_obj(&self, union_type: &str) -> Option<FieldValue> {
+    fn resolve_union_obj(&self, union_type: &str) -> Option<FieldValue<'_>> {
         let member_types = self.unions.get(union_type)?;
         if member_types.is_empty() {
             return None;
@@ -498,7 +499,7 @@ impl MockGraph {
     }
 
     /// Resolve a field configuration
-    fn resolve_field_config(&self, config: &MockFieldConfig) -> Option<FieldValue> {
+    fn resolve_field_config(&self, config: &MockFieldConfig) -> Option<FieldValue<'_>> {
         match config {
             MockFieldConfig::NonNull(content) => self.resolve_content_config(content),
             MockFieldConfig::Nullable(null_prob, content) => {
@@ -512,12 +513,12 @@ impl MockGraph {
     }
 
     /// Resolve content configuration
-    fn resolve_content_config(&self, config: &MockContentConfig) -> Option<FieldValue> {
+    fn resolve_content_config(&self, config: &MockContentConfig) -> Option<FieldValue<'_>> {
         match config {
             MockContentConfig::Type(type_config) => self.resolve_type_config(type_config),
             MockContentConfig::List(list_config) => {
                 let count =
-                    rand::Rng::random_range(&mut rand::rng(), list_config.min..=list_config.max);
+                    rand::rng().random_range(list_config.min..=list_config.max);
                 let mut values = Vec::with_capacity(count);
 
                 for _ in 0..count {
@@ -532,7 +533,7 @@ impl MockGraph {
     }
 
     /// Resolve type configuration
-    fn resolve_type_config(&self, config: &MockTypeConfig) -> Option<FieldValue> {
+    fn resolve_type_config(&self, config: &MockTypeConfig) -> Option<FieldValue<'_>> {
         match config {
             MockTypeConfig::RandomString { min, max } => {
                 let words: String = Words(*min..*max + 1).fake::<Vec<String>>().join(" ");

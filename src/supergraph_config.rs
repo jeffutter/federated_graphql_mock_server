@@ -54,7 +54,11 @@ impl SupergraphConfig {
             // Generate a hash of the processed schema content
             let mut hasher = Sha256::new();
             hasher.update(subgraph_sdl);
-            let hash = format!("{:x}", hasher.finalize());
+            let hash = hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
 
             // Create a file name with the subgraph name and hash
             let schema_file_name = format!("{}-{}.graphql", subgraph_name, hash);

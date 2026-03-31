@@ -4,7 +4,7 @@ use nom::{
     combinator::recognize,
     IResult, Parser,
 };
-use rand::{distr::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 
 /*
 * This is mainly used to handle Federated GraphQL schemas that start with `extend schema @link..`
