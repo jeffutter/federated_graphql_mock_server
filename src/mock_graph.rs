@@ -451,25 +451,19 @@ impl MockGraph {
         // trace!("Resolving object: {}", obj_type);
 
         // Pop the path when we're done with this object
-        let result = {
-            // Check if it's an interface or union
-            if self.interfaces.contains_key(obj_type) {
-                // Clone the path for the recursive call
-                self.resolve_interface_obj(obj_type)
-            } else if self.unions.contains_key(obj_type) {
-                // Clone the path for the recursive call
-                self.resolve_union_obj(obj_type)
-            } else {
-                // This can be an empty object, all the fields will be resolved as the resolvers
-                // are called for each field
-                Some(
-                    FieldValue::value(ConstValue::Object(IndexMap::new()))
-                        .with_type(obj_type.to_string()),
-                )
-            }
-        };
-
-        result
+        // Check if it's an interface or union
+        if self.interfaces.contains_key(obj_type) {
+            self.resolve_interface_obj(obj_type)
+        } else if self.unions.contains_key(obj_type) {
+            self.resolve_union_obj(obj_type)
+        } else {
+            // This can be an empty object, all the fields will be resolved as the resolvers
+            // are called for each field
+            Some(
+                FieldValue::value(ConstValue::Object(IndexMap::new()))
+                    .with_type(obj_type.to_string()),
+            )
+        }
     }
 
     /// Resolve an interface

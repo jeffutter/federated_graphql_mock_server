@@ -266,10 +266,10 @@ mod tests {
         assert!(user["a"].get("id").is_some());
 
         // B might be null sometimes due to the nullable field, so check conditionally
-        if let Some(b) = user.get("b") {
-            if !b.is_null() {
-                assert!(b.get("id").is_some());
-            }
+        if let Some(b) = user.get("b")
+            && !b.is_null()
+        {
+            assert!(b.get("id").is_some());
         }
     }
 

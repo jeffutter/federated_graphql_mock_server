@@ -64,7 +64,7 @@ pub trait ApplyDirectives: ApplyDirective {
     where
         Self: Sized,
     {
-        let result = directives
+        directives
             .iter()
             .filter(|d| !MOCK_DIRECTIVES.contains(&d.name))
             // Exclude key directives from all types, Objects will handle it separately
@@ -78,9 +78,7 @@ pub trait ApplyDirectives: ApplyDirective {
                     },
                 );
                 s.apply_directive(directive)
-            });
-
-        result
+            })
     }
 }
 
@@ -124,7 +122,7 @@ pub trait ApplyArguments: ApplyArgument {
     where
         Self: Sized,
     {
-        let result = arguments.iter().fold(self, |f, source_argument| {
+        arguments.iter().fold(self, |f, source_argument| {
             let mut argument = InputValue::new(
                 source_argument.name,
                 map_type_to_typeref(&source_argument.value_type),
@@ -137,9 +135,7 @@ pub trait ApplyArguments: ApplyArgument {
             }
             let argument = argument.apply_directives(&source_argument.directives);
             f.apply_argument(argument)
-        });
-
-        result
+        })
     }
 }
 
