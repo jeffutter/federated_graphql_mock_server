@@ -70,6 +70,7 @@
             packages = [
               rust-bin.stable.latest.default
               cargo
+              cargo-nextest
               cargo-watch
               rust-analyzer
               rustc
