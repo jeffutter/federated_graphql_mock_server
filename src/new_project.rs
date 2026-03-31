@@ -38,7 +38,7 @@ pub async fn create_new_project(path: &Path, subgraphs: &[String]) -> Result<()>
     let supergraph_path = path.join("supergraph.graphql");
 
     // Use the SupergraphCompose utility to generate the supergraph schema
-    let _ = supergraph_compose::compose_from_schemas(&schema_map, &supergraph_path, None)
+    let _ = supergraph_compose::compose_from_schemas(&schema_map, &supergraph_path, None, "=2.0")
         .context("Failed to compose supergraph schema")?;
 
     info!("Created supergraph schema at {:?}", supergraph_path);

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use nom::{
     IResult, Parser,
     bytes::complete::{tag, take_until},
@@ -5,6 +7,35 @@ use nom::{
     combinator::recognize,
 };
 use rand::{RngExt, distr::Alphanumeric};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FederationVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl fmt::Display for FederationVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// Extract the federation version from a schema's `@link` directive URL.
+///
+/// Looks for `specs.apollo.dev/federation/vMAJOR.MINOR` in the SDL and parses
+/// the version. Returns `None` if no federation `@link` is found.
+pub fn extract_federation_version(sdl: &str) -> Option<FederationVersion> {
+    let marker = "specs.apollo.dev/federation/v";
+    let start = sdl.find(marker)? + marker.len();
+    let rest = &sdl[start..];
+    let dot = rest.find('.')?;
+    let major: u32 = rest[..dot].parse().ok()?;
+    let minor_end = rest[dot + 1..]
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len() - dot - 1);
+    let minor: u32 = rest[dot + 1..dot + 1 + minor_end].parse().ok()?;
+    Some(FederationVersion { major, minor })
+}
 
 /*
 * This is mainly used to handle Federated GraphQL schemas that start with `extend schema @link..`
@@ -201,5 +232,90 @@ type Query {
             result, input,
             "non-extend schema should pass through unchanged"
         );
+    }
+
+    #[test]
+    fn test_extract_federation_version_basic() {
+        let sdl = r#"extend schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key"])"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion { major: 2, minor: 7 })
+        );
+    }
+
+    #[test]
+    fn test_extract_federation_version_schema_link() {
+        let sdl = r#"schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"]) {
+  query: Query
+}"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion { major: 2, minor: 3 })
+        );
+    }
+
+    #[test]
+    fn test_extract_federation_version_no_link() {
+        let sdl = r#"type Query { hello: String }"#;
+        assert_eq!(extract_federation_version(sdl), None);
+    }
+
+    #[test]
+    fn test_extract_federation_version_non_federation_link() {
+        let sdl = r#"extend schema @link(url: "https://specs.apollo.dev/link/v1.0")"#;
+        assert_eq!(extract_federation_version(sdl), None);
+    }
+
+    #[test]
+    fn test_extract_federation_version_multiple_links() {
+        let sdl = r#"extend schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/federation/v2.11", import: ["@key"])"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion {
+                major: 2,
+                minor: 11
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_federation_version_double_digit_minor() {
+        let sdl = r#"extend schema @link(url: "https://specs.apollo.dev/federation/v2.11", import: ["@key"])"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion {
+                major: 2,
+                minor: 11
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_federation_version_url_after_import() {
+        let sdl = r#"schema @link(import : ["@key"], url : "https://specs.apollo.dev/federation/v2.7") {"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion { major: 2, minor: 7 })
+        );
+    }
+
+    #[test]
+    fn test_federation_version_ordering() {
+        let v23 = FederationVersion { major: 2, minor: 3 };
+        let v27 = FederationVersion { major: 2, minor: 7 };
+        let v211 = FederationVersion {
+            major: 2,
+            minor: 11,
+        };
+        assert!(v23 < v27);
+        assert!(v27 < v211);
+    }
+
+    #[test]
+    fn test_federation_version_display() {
+        let v = FederationVersion { major: 2, minor: 7 };
+        assert_eq!(format!("={}", v), "=2.7");
     }
 }

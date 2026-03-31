@@ -17,6 +17,7 @@ struct SchemaLoaderInner {
     sdl: String,
     path: PathBuf,
     schema: GraphQL<async_graphql::dynamic::Schema>,
+    federation_version: Option<crate::schema_parser::FederationVersion>,
 }
 
 pub struct SchemaLoader {
@@ -80,13 +81,14 @@ impl SchemaLoader {
     }
 
     pub async fn load_schema(self: &Arc<Self>, name: String, path: &PathBuf) -> anyhow::Result<()> {
-        let (sdl, schema) = load_schema_from_path(path)?;
+        let (sdl, schema, federation_version) = load_schema_from_path(path)?;
         self.schemas.write().await.insert(
             name.clone(),
             SchemaLoaderInner {
                 sdl,
                 schema: GraphQL::new(schema),
                 path: path.clone(),
+                federation_version,
             },
         );
         self.tx.send(name)?;
@@ -117,6 +119,16 @@ impl SchemaLoaderHandle {
             .collect()
     }
 
+    pub async fn max_federation_version(&self) -> Option<crate::schema_parser::FederationVersion> {
+        self.inner
+            .schemas
+            .read()
+            .await
+            .values()
+            .filter_map(|inner| inner.federation_version.clone())
+            .max()
+    }
+
     pub async fn get(&self, name: &str) -> Option<GraphQL<async_graphql::dynamic::Schema>> {
         self.inner
             .schemas
@@ -137,12 +149,25 @@ impl SchemaLoaderHandle {
 
 fn load_schema_from_path(
     path: &PathBuf,
-) -> anyhow::Result<(String, async_graphql::dynamic::Schema)> {
+) -> anyhow::Result<(
+    String,
+    async_graphql::dynamic::Schema,
+    Option<crate::schema_parser::FederationVersion>,
+)> {
     let input_sdl_str = std::fs::read_to_string(path).context("Failed to read schema file")?;
     load_schema(input_sdl_str)
 }
 
-fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::dynamic::Schema)> {
+fn load_schema(
+    input_sdl_str: String,
+) -> anyhow::Result<(
+    String,
+    async_graphql::dynamic::Schema,
+    Option<crate::schema_parser::FederationVersion>,
+)> {
+    // Extract federation version from the original SDL before processing
+    let federation_version = schema_parser::extract_federation_version(&input_sdl_str);
+
     // Process the schema using our nom-based parser
     let processed_sdl = schema_parser::process_schema(&input_sdl_str)?;
 
@@ -278,5 +303,5 @@ fn load_schema(input_sdl_str: String) -> anyhow::Result<(String, async_graphql::
 
     let sdl = schema.sdl_with_options(async_graphql::SDLExportOptions::new().federation());
 
-    Ok((sdl, schema))
+    Ok((sdl, schema, federation_version))
 }

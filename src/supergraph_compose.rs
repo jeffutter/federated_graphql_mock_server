@@ -65,6 +65,7 @@ pub fn compose_from_schemas(
     schemas: &HashMap<String, PathBuf>,
     output_path: &Path,
     addr: Option<&str>,
+    federation_version: &str,
 ) -> anyhow::Result<String> {
     // Create a temporary config file
     let temp_dir = tempfile::tempdir()?;
@@ -77,7 +78,7 @@ pub fn compose_from_schemas(
             format!("0.0.0.0:{}", port)
         }
     };
-    let mut supergraph_config = SupergraphConfig::new("=2.7.8");
+    let mut supergraph_config = SupergraphConfig::new(federation_version);
 
     for (name, path) in schemas {
         let path_str = path.to_string_lossy();

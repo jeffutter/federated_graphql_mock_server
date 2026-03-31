@@ -71,10 +71,16 @@ impl SupergraphConfig {
             subgraph_schema_files.insert(subgraph_name.to_string(), schema_file_path);
         }
 
+        let federation_version = match self.schema_handler.max_federation_version().await {
+            Some(v) => format!("={}", v),
+            None => "=2.7.8".to_string(),
+        };
+
         let _ = supergraph_compose::compose_from_schemas(
             &subgraph_schema_files,
             &self.output_path,
             Some(&self.addr),
+            &federation_version,
         )?;
 
         Ok(())
