@@ -14,7 +14,7 @@ use crate::schema;
 use crate::schema_parser;
 
 struct SchemaLoaderInner {
-    sdl: String,
+    original_sdl: String,
     path: PathBuf,
     schema: GraphQL<async_graphql::dynamic::Schema>,
     federation_version: Option<crate::schema_parser::FederationVersion>,
@@ -81,11 +81,11 @@ impl SchemaLoader {
     }
 
     pub async fn load_schema(self: &Arc<Self>, name: String, path: &PathBuf) -> anyhow::Result<()> {
-        let (sdl, schema, federation_version) = load_schema_from_path(path)?;
+        let (_sdl, original_sdl, schema, federation_version) = load_schema_from_path(path)?;
         self.schemas.write().await.insert(
             name.clone(),
             SchemaLoaderInner {
-                sdl,
+                original_sdl,
                 schema: GraphQL::new(schema),
                 path: path.clone(),
                 federation_version,
@@ -115,7 +115,7 @@ impl SchemaLoaderHandle {
             .read()
             .await
             .iter()
-            .map(|(name, inner)| (name.to_string(), inner.sdl.clone()))
+            .map(|(name, inner)| (name.to_string(), inner.original_sdl.clone()))
             .collect()
     }
 
@@ -151,11 +151,13 @@ fn load_schema_from_path(
     path: &PathBuf,
 ) -> anyhow::Result<(
     String,
+    String,
     async_graphql::dynamic::Schema,
     Option<crate::schema_parser::FederationVersion>,
 )> {
     let input_sdl_str = std::fs::read_to_string(path).context("Failed to read schema file")?;
-    load_schema(input_sdl_str)
+    let (sdl, schema, federation_version) = load_schema(input_sdl_str.clone())?;
+    Ok((sdl, input_sdl_str, schema, federation_version))
 }
 
 fn load_schema(

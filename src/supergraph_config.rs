@@ -211,7 +211,7 @@ mod tests {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_content).unwrap();
 
         let fed_version = yaml.get("federation_version").unwrap().as_str().unwrap();
-        assert_eq!(fed_version, "=2.7");
+        assert_eq!(fed_version, "=2.7.0");
     }
 
     #[tokio::test]
@@ -388,6 +388,6 @@ mod tests {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_content).unwrap();
 
         let fed_version = yaml.get("federation_version").unwrap().as_str().unwrap();
-        assert_eq!(fed_version, "=2.7");
+        assert_eq!(fed_version, "=2.7.0");
     }
 }

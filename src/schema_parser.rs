@@ -16,14 +16,16 @@ pub struct FederationVersion {
 
 impl fmt::Display for FederationVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.major, self.minor)
+        write!(f, "{}.{}.0", self.major, self.minor)
     }
 }
 
 /// Extract the federation version from a schema's `@link` directive URL.
 ///
 /// Looks for `specs.apollo.dev/federation/vMAJOR.MINOR` in the SDL and parses
-/// the version. Returns `None` if no federation `@link` is found.
+/// the version. If the schema uses `@connect` (from the connect spec), the
+/// minimum version is bumped to 2.12 since rover's composition plugin requires
+/// it. Returns `None` if no federation `@link` is found.
 pub fn extract_federation_version(sdl: &str) -> Option<FederationVersion> {
     let marker = "specs.apollo.dev/federation/v";
     let start = sdl.find(marker)? + marker.len();
@@ -34,7 +36,19 @@ pub fn extract_federation_version(sdl: &str) -> Option<FederationVersion> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(rest.len() - dot - 1);
     let minor: u32 = rest[dot + 1..dot + 1 + minor_end].parse().ok()?;
-    Some(FederationVersion { major, minor })
+
+    let mut version = FederationVersion { major, minor };
+
+    // The connect spec requires federation 2.12+ for composition
+    let connect_min = FederationVersion {
+        major: 2,
+        minor: 12,
+    };
+    if sdl.contains("specs.apollo.dev/connect/") && version < connect_min {
+        version = connect_min;
+    }
+
+    Some(version)
 }
 
 /*
@@ -55,21 +69,12 @@ pub fn process_schema(input: &str) -> anyhow::Result<String> {
 }
 
 fn transform_schema(input: &str) -> anyhow::Result<String> {
-    // Split the input into parts: before extend schema, the extend schema part, and after
-    let (before, extend_schema, after) = match split_on_extend_schema(input) {
-        Ok((rest, (before, directive))) => {
-            // Successfully found and parsed the extend schema directive
-            (before, directive, rest)
-        }
+    // Split the input into parts: before extend schema, the directives, and after
+    let (before, directives_str, after) = match split_on_extend_schema(input) {
+        Ok((rest, (before, directives))) => (before, directives, rest),
         Err(_) => {
             return Ok(input.to_string());
         }
-    };
-
-    // Parse the link directive from the extend schema part
-    let link_directive = match parse_link_directive(extend_schema) {
-        Ok((_, directive)) => directive,
-        Err(_) => return Ok(input.to_string()), // Return original if parsing fails
     };
 
     // Check if we need to add a default Query type
@@ -89,28 +94,63 @@ fn transform_schema(input: &str) -> anyhow::Result<String> {
 
     let new_schema = format!(
         "{}schema {} {{ query: Query }}{}{}",
-        before, link_directive, after, random_field
+        before, directives_str, after, random_field
     );
 
     Ok(new_schema)
 }
 
-// Split the input into parts: before the extend schema directive and the directive itself
+// Split the input into parts: before the extend schema directive and all directives after it
 fn split_on_extend_schema(input: &str) -> IResult<&str, (&str, &str)> {
     let (input_after_before, before) = take_until("extend schema")(input)?;
 
-    // Apply the parser directly
-    let (rest, (_extend, _, directive)) = (tag("extend schema"), multispace0, |i| {
-        parse_link_directive(i)
-    })
-        .parse(input_after_before)?;
+    // Parse "extend schema" followed by whitespace
+    let (rest, (_extend, _)) = (tag("extend schema"), multispace0).parse(input_after_before)?;
 
-    Ok((rest, (before, directive)))
+    // Parse all consecutive @-directives (e.g., @link(...), @source(...))
+    let (rest, directives) = parse_all_directives(rest)?;
+
+    Ok((rest, (before, directives)))
 }
 
-// Parse and capture just the @link(...) part
-fn parse_link_directive(input: &str) -> IResult<&str, &str> {
-    recognize((tag("@link"), multispace0, delimited_parentheses)).parse(input)
+// Parse and capture all consecutive @-directives with their arguments
+fn parse_all_directives(input: &str) -> IResult<&str, &str> {
+    let start = input;
+    let mut remaining = input;
+
+    loop {
+        // Skip whitespace
+        let (after_ws, _) = multispace0(remaining)?;
+        // Try to parse an @-directive
+        match parse_directive(after_ws) {
+            Ok((rest, _)) => {
+                remaining = rest;
+            }
+            Err(_) => break,
+        }
+    }
+
+    if remaining.as_ptr() == start.as_ptr() {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+
+    let consumed_len = remaining.as_ptr() as usize - start.as_ptr() as usize;
+    let directives = &start[..consumed_len];
+    Ok((remaining, directives))
+}
+
+// Parse a single @name(...) directive
+fn parse_directive(input: &str) -> IResult<&str, &str> {
+    recognize((
+        char('@'),
+        nom::character::complete::alpha1,
+        multispace0,
+        delimited_parentheses,
+    ))
+    .parse(input)
 }
 
 // Helper to parse content within balanced parentheses
@@ -206,6 +246,40 @@ type Query {
         assert!(
             result.contains("directive @contact"),
             "should preserve directive declaration, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extend_schema_multiple_directives() {
+        let input = r#"extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.11", import: ["@key"])
+  @link(url: "https://specs.apollo.dev/connect/v0.2", import: ["@source", "@connect"])
+  @source(
+    name: "identity"
+    http: {
+      baseURL: "http://example.com/connect"
+    }
+  )
+
+type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert!(
+            !result.contains("extend schema"),
+            "should transform extend schema, got: {result}"
+        );
+        assert!(
+            result.contains("schema @link"),
+            "should contain schema @link, got: {result}"
+        );
+        assert!(
+            result.contains("@source("),
+            "should preserve @source directive, got: {result}"
+        );
+        assert!(
+            result.contains("{ query: Query }"),
+            "should contain query definition, got: {result}"
         );
     }
 
@@ -316,6 +390,34 @@ type Query {
     #[test]
     fn test_federation_version_display() {
         let v = FederationVersion { major: 2, minor: 7 };
-        assert_eq!(format!("={}", v), "=2.7");
+        assert_eq!(format!("={}", v), "=2.7.0");
+    }
+
+    #[test]
+    fn test_extract_federation_version_connect_bumps_to_2_12() {
+        let sdl = r#"extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.11", import: ["@key"])
+  @link(url: "https://specs.apollo.dev/connect/v0.2", import: ["@source", "@connect"])"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion {
+                major: 2,
+                minor: 12
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_federation_version_connect_no_bump_if_already_higher() {
+        let sdl = r#"extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.13", import: ["@key"])
+  @link(url: "https://specs.apollo.dev/connect/v0.2", import: ["@connect"])"#;
+        assert_eq!(
+            extract_federation_version(sdl),
+            Some(FederationVersion {
+                major: 2,
+                minor: 13
+            })
+        );
     }
 }
