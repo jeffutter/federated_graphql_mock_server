@@ -102,7 +102,11 @@
               ))
               mprocs
               entr
+              lefthook
             ];
+            shellHook = ''
+              lefthook install
+            '';
           }
           // envVars
         );
