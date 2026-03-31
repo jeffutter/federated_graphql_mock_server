@@ -101,6 +101,10 @@ fn setup_tracing(args: &Args) {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let args = Args::parse();
     setup_tracing(&args);
 

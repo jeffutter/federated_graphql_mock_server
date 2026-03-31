@@ -6,14 +6,10 @@
       url = "github:oxalica/rust-overlay";
       inputs = {
         nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
       };
     };
     crane = {
       url = "github:ipetkov/crane";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-      };
     };
     apollo-router = {
       url = "github:jeffutter/apollo-router-flake/v2.12.1";
@@ -49,16 +45,13 @@
         commonArgs = (
           {
             inherit src;
-            buildInputs =
-              with pkgs;
-              [
-                rust-bin.stable.latest.default
-                cargo
-                rust-analyzer
-                rustc
-                clang
-              ]
-              ++ lib.optionals stdenv.isDarwin [ libiconv ];
+            buildInputs = with pkgs; [
+              rust-bin.stable.latest.default
+              cargo
+              rust-analyzer
+              rustc
+              clang
+            ];
           }
           // envVars
         );
