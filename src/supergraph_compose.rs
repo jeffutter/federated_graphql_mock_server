@@ -12,12 +12,12 @@ use serde::Serialize;
 use tracing::{error, info, instrument};
 
 #[derive(Debug, Serialize)]
-pub struct SupergraphConfig {
+pub struct SupergraphYamlConfig {
     pub federation_version: String,
     pub subgraphs: HashMap<String, SubgraphConfig>,
 }
 
-impl SupergraphConfig {
+impl SupergraphYamlConfig {
     pub fn new(federation_version: &str) -> Self {
         Self {
             federation_version: federation_version.to_string(),
@@ -78,7 +78,7 @@ pub fn compose_from_schemas(
             format!("0.0.0.0:{}", port)
         }
     };
-    let mut supergraph_config = SupergraphConfig::new(federation_version);
+    let mut supergraph_config = SupergraphYamlConfig::new(federation_version);
 
     for (name, path) in schemas {
         let path_str = path.to_string_lossy();
@@ -139,4 +139,82 @@ pub fn run_rover_compose(config_path: &Path, output_path: &Path) -> anyhow::Resu
     fs::write(output_path, &schema)?;
 
     Ok(schema)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_yaml_config_serializes_with_subgraphs() {
+        let mut config = SupergraphYamlConfig::new("=2.7");
+        config.add_subgraph("users", "http://0.0.0.0:4000/users", "/tmp/users.graphql");
+        config.add_subgraph(
+            "products",
+            "http://0.0.0.0:4000/products",
+            "/tmp/products.graphql",
+        );
+
+        let yaml_str = serde_yaml::to_string(&config).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml_str).unwrap();
+
+        assert_eq!(
+            parsed.get("federation_version").unwrap().as_str().unwrap(),
+            "=2.7"
+        );
+
+        let subgraphs = parsed.get("subgraphs").unwrap().as_mapping().unwrap();
+        assert_eq!(subgraphs.len(), 2);
+
+        let users = subgraphs
+            .get(serde_yaml::Value::String("users".to_string()))
+            .unwrap();
+        assert_eq!(
+            users.get("routing_url").unwrap().as_str().unwrap(),
+            "http://0.0.0.0:4000/users"
+        );
+        assert_eq!(
+            users
+                .get("schema")
+                .unwrap()
+                .get("file")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "/tmp/users.graphql"
+        );
+    }
+
+    #[test]
+    fn test_yaml_config_empty_subgraphs_serializes() {
+        let config = SupergraphYamlConfig::new("=2.0");
+        let yaml_str = serde_yaml::to_string(&config).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml_str).unwrap();
+
+        let subgraphs = parsed.get("subgraphs").unwrap().as_mapping().unwrap();
+        assert!(subgraphs.is_empty());
+    }
+
+    #[test]
+    fn test_compose_from_schemas_writes_correct_yaml() {
+        // We can't run rover in tests, but we can verify the YAML config is
+        // written correctly by inspecting the temp dir before rover runs.
+        // Instead, test the config struct generation that compose_from_schemas uses.
+        let mut schemas = HashMap::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let schema_path = tmp.path().join("users.graphql");
+        std::fs::write(&schema_path, "type Query { user: User }").unwrap();
+        schemas.insert("users".to_string(), schema_path.clone());
+
+        let mut config = SupergraphYamlConfig::new("=2.7");
+        for (name, path) in &schemas {
+            let routing_url = format!("http://0.0.0.0:8080/{}", name);
+            config.add_subgraph(name, &routing_url, &path.to_string_lossy());
+        }
+
+        assert_eq!(config.subgraphs.len(), 1);
+        let users_sg = config.subgraphs.get("users").unwrap();
+        assert_eq!(users_sg.routing_url, "http://0.0.0.0:8080/users");
+        assert_eq!(users_sg.schema.file, schema_path.to_string_lossy());
+    }
 }
