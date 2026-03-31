@@ -7,7 +7,7 @@ use async_graphql_axum::GraphQL;
 use graphql_parser::schema::{Definition, Document, TypeDefinition};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{instrument, trace, Instrument};
+use tracing::{Instrument, instrument, trace};
 
 use crate::mock_graph::MockGraph;
 use crate::schema;

@@ -6,10 +6,10 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use notify::{event::ModifyKind, Event, EventKind, RecursiveMode, Watcher as _};
+use notify::{Event, EventKind, RecursiveMode, Watcher as _, event::ModifyKind};
 use tokio::{
     select,
-    sync::{broadcast, RwLock},
+    sync::{RwLock, broadcast},
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;

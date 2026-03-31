@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{crate_name, crate_version};
 use graphql_client::{GraphQLQuery, Response};
 use std::fs::{self, File};

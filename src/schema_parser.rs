@@ -1,10 +1,10 @@
 use nom::{
+    IResult, Parser,
     bytes::complete::{tag, take_until},
     character::complete::{char, multispace0},
     combinator::recognize,
-    IResult, Parser,
 };
-use rand::{distr::Alphanumeric, RngExt};
+use rand::{RngExt, distr::Alphanumeric};
 
 /*
 * This is mainly used to handle Federated GraphQL schemas that start with `extend schema @link..`

@@ -1,8 +1,8 @@
 use async_graphql::http::GraphiQLSource;
 use axum::{
+    Router,
     response::{self, IntoResponse},
     routing::{get, post},
-    Router,
 };
 use futures::TryStreamExt;
 use std::{collections::HashMap, path::PathBuf};
@@ -10,7 +10,7 @@ use tokio::{net::TcpListener, select};
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tower_service::Service;
-use tracing::{error, trace, Instrument};
+use tracing::{Instrument, error, trace};
 
 use crate::{
     schema_loader::{SchemaLoader, SchemaLoaderHandle},
@@ -163,7 +163,7 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[tokio::test]
     async fn test_entity_query() {

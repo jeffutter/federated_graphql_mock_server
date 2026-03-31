@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use async_graphql::{dynamic::*, Name, Value};
+use async_graphql::{Name, Value, dynamic::*};
 use futures_core::stream::Stream;
 use graphql_parser::schema::{
     EnumType, InputObjectType, InterfaceType, ObjectType, ScalarType, UnionType,

@@ -10,8 +10,8 @@ use graphql_parser::schema::{
     TypeDefinition, UnionType, Value,
 };
 use indexmap::IndexMap;
-use rand::prelude::IndexedRandom;
 use rand::RngExt;
+use rand::prelude::IndexedRandom;
 use uuid::Uuid;
 
 /// Represents a field in a GraphQL schema with its mock configuration
@@ -517,8 +517,7 @@ impl MockGraph {
         match config {
             MockContentConfig::Type(type_config) => self.resolve_type_config(type_config),
             MockContentConfig::List(list_config) => {
-                let count =
-                    rand::rng().random_range(list_config.min..=list_config.max);
+                let count = rand::rng().random_range(list_config.min..=list_config.max);
                 let mut values = Vec::with_capacity(count);
 
                 for _ in 0..count {
