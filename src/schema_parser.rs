@@ -14,7 +14,7 @@ use rand::{RngExt, distr::Alphanumeric};
 /// Parses a GraphQL schema and handles the `extend schema @link` directive
 pub fn process_schema(input: &str) -> anyhow::Result<String> {
     // Check if we need to process the schema
-    if !input.contains("extend schema @link") {
+    if !input.contains("extend schema") {
         return Ok(input.to_string());
     }
 
@@ -109,5 +109,97 @@ fn delimited_parentheses(input: &str) -> IResult<&str, &str> {
             input,
             nom::error::ErrorKind::Char,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extend_schema_link_same_line() {
+        let input = r#"extend schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
+
+type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert!(
+            !result.contains("extend schema"),
+            "should transform extend schema, got: {result}"
+        );
+        assert!(
+            result.contains("schema @link"),
+            "should contain schema @link, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extend_schema_link_multiline() {
+        let input = r#"extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
+
+type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert!(
+            !result.contains("extend schema"),
+            "should transform extend schema, got: {result}"
+        );
+        assert!(
+            result.contains("schema @link"),
+            "should contain schema @link, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extend_schema_with_directive_declaration_before() {
+        let input = r#"directive @contact(name: String!, description: String, url: String) on SCHEMA
+
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key", "@shareable"])
+
+type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert!(
+            !result.contains("extend schema"),
+            "should transform extend schema, got: {result}"
+        );
+        assert!(
+            result.contains("schema @link"),
+            "should contain schema @link, got: {result}"
+        );
+        assert!(
+            result.contains("directive @contact"),
+            "should preserve directive declaration, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_no_extend_schema_passthrough() {
+        let input = r#"type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_schema_without_extend_passthrough() {
+        let input = r#"schema @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"]) {
+  query: Query
+}
+
+type Query {
+  hello: String
+}"#;
+        let result = process_schema(input).unwrap();
+        assert_eq!(
+            result, input,
+            "non-extend schema should pass through unchanged"
+        );
     }
 }
