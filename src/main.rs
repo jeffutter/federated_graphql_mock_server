@@ -135,13 +135,20 @@ federated_graphql_mock_server serve --schemas <subgraph>=<path.graphql> --output
 The server provides a GraphiQL IDE per subgraph and watches schema files for changes, automatically
 recomposing and reloading when schemas are modified.
 
-**Example:**
+**Examples:**
 ```shell
+# All mocked subgraphs
 federated_graphql_mock_server serve \
   -s users=schemas/users.graphql \
   -s products=schemas/products.graphql \
   -o output/ \
   --port 4000
+
+# Mix mocked and real subgraphs — users is real, products is mocked
+federated_graphql_mock_server serve \
+  -s users=schemas/users.graphql@http://localhost:4001/graphql \
+  -s products=schemas/products.graphql \
+  -o output/
 ```
 
 ### fetch — Pull schemas from Apollo Studio proposals

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Rust CLI tool for local development of Apollo Federation GraphQL subgraphs. It generates mock data automatically, watches schema files for changes, and composes supergraphs using Apollo's Rover CLI.
 
-Three commands: `serve` (run local dev server with mock resolvers), `fetch` (pull schemas from Apollo Studio proposals), `new` (scaffold a federated project).
+Three commands: `serve` (run local dev server with mock resolvers), `fetch` (pull schemas from Apollo Studio proposals), `new` (scaffold a federated project). The `serve` command supports mixing real and mocked subgraphs via `-s name=schema.graphql@http://real-url`.
 
 ## Build & Test Commands
 

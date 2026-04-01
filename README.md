@@ -24,8 +24,24 @@ The tool provides two main commands: `serve` and `fetch`.
 Run a local development server with multiple subgraphs, suitable for exposing to Apollo Router:
 
 ```bash
-graphql-federation-dev serve --schemas subgraph1=./schemas/subgraph1.graphql --schemas subgraph2=./schemas/subgraph2.graphql --output ./supergraph.graphql
+graphql-federation-dev serve \
+  --schemas subgraph1=./schemas/subgraph1.graphql \
+  --schemas subgraph2=./schemas/subgraph2.graphql \
+  --output ./supergraph.graphql
 ```
+
+#### Mixing Real and Mocked Subgraphs
+
+Append `@URL` to any schema argument to route that subgraph to a real service instead of the mock server. The schema file is still used for supergraph composition, but traffic is routed to the real URL:
+
+```bash
+graphql-federation-dev serve \
+  --schemas users=./schemas/users.graphql@http://localhost:4001/graphql \
+  --schemas products=./schemas/products.graphql \
+  --output ./supergraph.graphql
+```
+
+In this example, `users` routes to a real service while `products` is mocked.
 
 #### Serve Composed Supergraph
 
@@ -63,7 +79,7 @@ graphql-federation-dev fetch --proposal-number 123 ./output-directory
 #### Serve Command Options
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--schemas`, `-s` | Schema files in the format `subgraph=file_name.graphql` | Required |
+| `--schemas`, `-s` | Schema files in the format `subgraph=file_name.graphql` or `subgraph=file_name.graphql@http://url` for real subgraphs | Required |
 | `--output`, `-o` | Output path for the composed supergraph schema | Required |
 | `--port` | Port to run the server on | 8080 |
 
