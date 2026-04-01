@@ -44,9 +44,10 @@ enum Commands {
         #[arg(long, env = "PORT", default_value_t = 8080)]
         port: usize,
 
-        /// Schema files in the format subgraph=file_name.graphql
+        /// Schema files in the format subgraph=file_name.graphql or
+        /// subgraph=file_name.graphql@http://url to use a real routing URL
         #[arg(short, long, value_parser = parse_key_val)]
-        schemas: Vec<(String, PathBuf)>,
+        schemas: Vec<(String, PathBuf, Option<String>)>,
 
         #[arg(short, long)]
         output: PathBuf,
@@ -73,13 +74,21 @@ enum Commands {
     },
 }
 
-/// Parse a key-value pair in the format "key=value"
-fn parse_key_val(s: &str) -> Result<(String, PathBuf), String> {
-    let (key, value) = s
+/// Parse a key-value pair in the format "key=path" or "key=path@url"
+fn parse_key_val(s: &str) -> Result<(String, PathBuf, Option<String>), String> {
+    let (key, rest) = s
         .split_once('=')
         .ok_or_else(|| format!("Invalid KEY=value: no `=` found in `{s}`"))?;
-    let path = PathBuf::from(value);
-    Ok((key.to_string(), path))
+
+    // Check for @url suffix (only split on @http:// or @https://)
+    let (path_str, url) =
+        if let Some(idx) = rest.find("@http://").or_else(|| rest.find("@https://")) {
+            (&rest[..idx], Some(rest[idx + 1..].to_string()))
+        } else {
+            (rest, None)
+        };
+
+    Ok((key.to_string(), PathBuf::from(path_str), url))
 }
 
 /// Setup tracing and logging
@@ -117,7 +126,9 @@ federated_graphql_mock_server serve --schemas <subgraph>=<path.graphql> --output
 ```
 
 **Options:**
-- `--schemas` / `-s` — Schema files as `subgraph_name=path/to/schema.graphql` (repeatable)
+- `--schemas` / `-s` — Schema files as `subgraph_name=path/to/schema.graphql` (repeatable).
+  Append `@URL` to route to a real subgraph instead of mocking:
+  `subgraph_name=path/to/schema.graphql@http://localhost:4001/graphql`
 - `--output` / `-o` — Directory for composed supergraph output
 - `--port` — HTTP port (default: 8080, env: `PORT`)
 
@@ -304,9 +315,16 @@ async fn main() -> ExitCode {
             output,
         } => {
             let addr = format!("0.0.0.0:{}", port);
-            let schema_map: HashMap<String, PathBuf> = schemas.clone().into_iter().collect();
+            let schema_map: HashMap<String, PathBuf> = schemas
+                .iter()
+                .map(|(name, path, _)| (name.clone(), path.clone()))
+                .collect();
+            let url_overrides: HashMap<String, String> = schemas
+                .iter()
+                .filter_map(|(name, _, url)| url.as_ref().map(|u| (name.clone(), u.clone())))
+                .collect();
 
-            let res = server::start_server(addr, schema_map, output.clone()).await;
+            let res = server::start_server(addr, schema_map, url_overrides, output.clone()).await;
 
             if let Err(e) = res {
                 error!("Error starting server: {:?}", e);

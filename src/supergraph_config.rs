@@ -18,6 +18,7 @@ pub struct SupergraphConfig {
     _temp_dir: TempDir,
     temp_dir_path: PathBuf,
     schema_handler: SchemaLoaderHandle,
+    url_overrides: HashMap<String, String>,
 }
 
 impl SupergraphConfig {
@@ -25,6 +26,7 @@ impl SupergraphConfig {
         addr: &str,
         output_path: &Path,
         schema_handler: SchemaLoaderHandle,
+        url_overrides: HashMap<String, String>,
     ) -> anyhow::Result<Arc<Self>> {
         let temp_dir = TempDir::new()?;
         let temp_dir_path = temp_dir.path().to_path_buf();
@@ -35,6 +37,7 @@ impl SupergraphConfig {
             _temp_dir: temp_dir,
             temp_dir_path,
             schema_handler,
+            url_overrides,
         }))
     }
 
@@ -83,7 +86,11 @@ impl SupergraphConfig {
 
         let mut config = supergraph_compose::SupergraphYamlConfig::new(&federation_version);
         for (name, path) in &subgraph_schema_files {
-            let routing_url = format!("http://{}/{}", self.addr, name);
+            let routing_url = self
+                .url_overrides
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| format!("http://{}/{}", self.addr, name));
             config.add_subgraph(name, &routing_url, &path.to_string_lossy());
         }
 
@@ -137,7 +144,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         // The output file must be valid YAML with populated subgraphs
@@ -204,7 +212,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         let yaml_content = fs::read_to_string(&output_path).unwrap();
@@ -239,7 +248,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         let yaml_content = fs::read_to_string(&output_path).unwrap();
@@ -273,7 +283,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         let yaml_content = fs::read_to_string(&output_path).unwrap();
@@ -308,7 +319,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         let yaml_content = fs::read_to_string(&output_path).unwrap();
@@ -336,6 +348,54 @@ mod tests {
                 contents
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_update_supergraph_config_url_override() {
+        let schema = r#"
+        type Query {
+          user: User
+        }
+        type User @key(fields: "id") {
+          id: ID!
+          name: String
+        }
+        "#;
+
+        let mut tempfile = tempfile::NamedTempFile::new().unwrap();
+        tempfile.write_all(schema.as_bytes()).unwrap();
+
+        let schema_loader =
+            SchemaLoader::new(&[("users".to_string(), tempfile.path().to_path_buf())])
+                .await
+                .unwrap();
+
+        let handle = schema_loader.handle();
+        let output_dir = tempfile::tempdir().unwrap();
+        let output_path = output_dir.path().join("supergraph.yaml");
+
+        let mut url_overrides = HashMap::new();
+        url_overrides.insert(
+            "users".to_string(),
+            "http://localhost:4001/graphql".to_string(),
+        );
+
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, url_overrides).unwrap();
+        config.update_supergraph_config().await.unwrap();
+
+        let yaml_content = fs::read_to_string(&output_path).unwrap();
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_content).unwrap();
+
+        let subgraphs = yaml.get("subgraphs").unwrap().as_mapping().unwrap();
+        let users = subgraphs
+            .get(serde_yaml::Value::String("users".to_string()))
+            .unwrap();
+        let routing_url = users.get("routing_url").unwrap().as_str().unwrap();
+        assert_eq!(
+            routing_url, "http://localhost:4001/graphql",
+            "should use the URL override instead of the mock server address"
+        );
     }
 
     #[tokio::test]
@@ -381,7 +441,8 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("supergraph.yaml");
 
-        let config = SupergraphConfig::new("0.0.0.0:9090", &output_path, handle).unwrap();
+        let config =
+            SupergraphConfig::new("0.0.0.0:9090", &output_path, handle, HashMap::new()).unwrap();
         config.update_supergraph_config().await.unwrap();
 
         let yaml_content = fs::read_to_string(&output_path).unwrap();

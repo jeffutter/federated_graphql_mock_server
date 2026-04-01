@@ -100,9 +100,13 @@ pub async fn fetch_schema(path: &PathBuf, proposal_number: u32) -> Result<()> {
                 .await
                 .context("SchemaLoader Failed")?;
             let schema_loader_handle = schema_loader.handle();
-            let config_writer =
-                SupergraphConfig::new(&addr, &output_path, schema_loader_handle.clone())
-                    .context("SupergraphConfig Failed")?;
+            let config_writer = SupergraphConfig::new(
+                &addr,
+                &output_path,
+                schema_loader_handle.clone(),
+                std::collections::HashMap::new(),
+            )
+            .context("SupergraphConfig Failed")?;
 
             let mut graphql_path = output_path.clone();
             graphql_path.set_extension("graphql");

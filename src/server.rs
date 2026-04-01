@@ -26,13 +26,19 @@ async fn subgraph_graphiql(endpoint: &str) -> impl IntoResponse + use<> {
 pub async fn start_server(
     addr: String,
     schema_paths: HashMap<String, PathBuf>,
+    url_overrides: HashMap<String, String>,
     output_path: PathBuf,
 ) -> anyhow::Result<()> {
     let mut watcher = SchemaWatcher::new(&schema_paths.clone().into_iter().collect::<Vec<_>>())?;
     let schema_loader =
         SchemaLoader::new(&schema_paths.clone().into_iter().collect::<Vec<_>>()).await?;
     let schema_loader_handle = schema_loader.handle();
-    let config_writer = SupergraphConfig::new(&addr, &output_path, schema_loader_handle.clone())?;
+    let config_writer = SupergraphConfig::new(
+        &addr,
+        &output_path,
+        schema_loader_handle.clone(),
+        url_overrides,
+    )?;
 
     let mut graphql_path = output_path.clone();
     graphql_path.set_extension("graphql");
