@@ -231,8 +231,8 @@ impl MockGraphBuilder {
         if is_non_null {
             MockFieldConfig::NonNull(content_config)
         } else {
-            // Default 0% chance of being null for nullable fields
-            MockFieldConfig::Nullable(0.0, content_config)
+            let null_prob = self.get_null_directive(&field.directives).unwrap_or(0.0);
+            MockFieldConfig::Nullable(null_prob, content_config)
         }
     }
 
@@ -388,6 +388,21 @@ impl MockGraphBuilder {
         }
 
         (min, max)
+    }
+
+    /// Extract @null directive probability
+    fn get_null_directive<'a>(&self, directives: &[Directive<'a, &'a str>]) -> Option<f64> {
+        directives.iter().find(|d| d.name == "null").map(|d| {
+            d.arguments
+                .iter()
+                .find(|(name, _)| *name == "probability")
+                .and_then(|(_, value)| match value {
+                    Value::Float(f) => Some(*f),
+                    Value::Int(i) => i.as_i64().map(|v| v as f64),
+                    _ => None,
+                })
+                .unwrap_or(0.5)
+        })
     }
 
     /// Build the final MockGraph

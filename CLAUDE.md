@@ -38,7 +38,7 @@ Nix is available: `nix build`, `nix flake check`.
 - Closure-based field resolvers in dynamic schema registration
 - Uses a custom branch of async-graphql (`allow-dynamic-schema-subtypes`)
 
-**Custom mock directives** users can put in schemas: `@words(min, max)`, `@select(from: [...])`, `@count(min, max)`.
+**Custom mock directives** users can put in schemas: `@words(min, max)`, `@select(from: [...])`, `@count(min, max)`, `@null(probability)` (default 0.5 if omitted).
 
 ## Contributing
 
