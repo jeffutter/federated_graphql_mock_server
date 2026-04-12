@@ -72,6 +72,10 @@ pub enum MockTypeConfig {
     UnionRef(String),
     /// Union Type selected from a predefined list
     SelectUnionRef { selection: Vec<String> },
+    /// Custom scalar type (e.g. DateTime, Date, Time)
+    CustomScalar(String),
+    /// Custom scalar selected from a predefined list
+    SelectCustomScalar { selection: Vec<String> },
 }
 
 /// Main struct for resolving mock GraphQL data
@@ -102,6 +106,8 @@ pub struct MockGraphBuilder {
     interfaces: HashMap<String, Vec<String>>,
     /// Maps union names to possible types
     unions: HashMap<String, Vec<String>>,
+    /// Set of custom scalar type names
+    scalars: HashSet<String>,
     /// Maps interface names to their fields
     interface_fields: HashMap<String, HashMap<String, MockFieldConfig>>,
     /// Tracks object types that implement interfaces
@@ -120,6 +126,7 @@ impl MockGraphBuilder {
             enums: HashMap::new(),
             interfaces: HashMap::new(),
             unions: HashMap::new(),
+            scalars: HashSet::new(),
             interface_fields: HashMap::new(),
             implementers: HashMap::new(),
             source_query_name,
@@ -142,6 +149,9 @@ impl MockGraphBuilder {
                     }
                     TypeDefinition::Interface(interface_type) => {
                         self.register_interface(interface_type);
+                    }
+                    TypeDefinition::Scalar(scalar_type) => {
+                        self.scalars.insert(scalar_type.name.to_string());
                     }
                     _ => {}
                 }
@@ -287,7 +297,7 @@ impl MockGraphBuilder {
                 }
             }
             _ => {
-                // Check if it's an enum, interface, or union
+                // Check if it's an enum, interface, union, or custom scalar
                 if self.enums.contains_key(type_name) {
                     MockTypeConfig::EnumRef(type_name.to_string())
                 } else if self.interfaces.contains_key(type_name) {
@@ -301,6 +311,12 @@ impl MockGraphBuilder {
                         MockTypeConfig::SelectUnionRef { selection }
                     } else {
                         MockTypeConfig::UnionRef(type_name.to_string())
+                    }
+                } else if self.scalars.contains(type_name) {
+                    if let Some(selection) = self.get_select_directive(directives) {
+                        MockTypeConfig::SelectCustomScalar { selection }
+                    } else {
+                        MockTypeConfig::CustomScalar(type_name.to_string())
                     }
                 } else {
                     // Assume it's an object reference
@@ -587,7 +603,48 @@ impl MockGraph {
             MockTypeConfig::SelectUnionRef { selection } => selection
                 .choose(&mut rand::rng())
                 .and_then(|s| self.resolve_obj(s).map(|v| v.with_type(s.to_string()))),
+            MockTypeConfig::CustomScalar(scalar_name) => {
+                let value = generate_custom_scalar_value(scalar_name);
+                Some(FieldValue::value(ConstValue::String(value)))
+            }
+            MockTypeConfig::SelectCustomScalar { selection } => selection
+                .choose(&mut rand::rng())
+                .map(|s| FieldValue::value(ConstValue::String(s.clone()))),
         }
+    }
+}
+
+/// Generate a mock value for a custom scalar based on its name.
+/// Well-known date/time scalar names produce valid ISO 8601 strings.
+/// Unknown scalars produce a placeholder string.
+fn generate_custom_scalar_value(scalar_name: &str) -> String {
+    let name_lower = scalar_name.to_lowercase();
+    let mut rng = rand::rng();
+
+    if name_lower.contains("datetime") || name_lower.contains("timestamp") {
+        // ISO 8601 datetime: "2024-03-15T14:30:00Z"
+        let year = rng.random_range(2020..=2026);
+        let month = rng.random_range(1..=12u32);
+        let day = rng.random_range(1..=28u32); // 28 to avoid invalid dates
+        let hour = rng.random_range(0..=23u32);
+        let minute = rng.random_range(0..=59u32);
+        let second = rng.random_range(0..=59u32);
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    } else if name_lower.contains("date") {
+        // ISO 8601 date: "2024-03-15"
+        let year = rng.random_range(2020..=2026);
+        let month = rng.random_range(1..=12u32);
+        let day = rng.random_range(1..=28u32);
+        format!("{year:04}-{month:02}-{day:02}")
+    } else if name_lower.contains("time") {
+        // ISO 8601 time: "14:30:00Z"
+        let hour = rng.random_range(0..=23u32);
+        let minute = rng.random_range(0..=59u32);
+        let second = rng.random_range(0..=59u32);
+        format!("{hour:02}:{minute:02}:{second:02}Z")
+    } else {
+        // Unknown custom scalar — return the scalar name as a placeholder
+        format!("mock-{scalar_name}")
     }
 }
 
@@ -647,5 +704,160 @@ mod tests {
             user_color.and_then(|x| x.as_value().cloned()),
             Some(ConstValue::Enum(color)) if ["RED", "GREEN", "BLUE"].contains(&color.as_str())
         ));
+    }
+
+    #[test]
+    fn test_custom_scalar_datetime() {
+        let schema = r#"
+        scalar DateTime
+
+        type Query {
+          event: Event
+        }
+
+        type Event {
+          startsAt: DateTime!
+          updatedAt: DateTime
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        // DateTime! should produce a valid ISO 8601 datetime string
+        for _ in 0..10 {
+            let value = mock_graph.resolve_field("Event", "startsAt");
+            let s = match value.and_then(|x| x.as_value().cloned()) {
+                Some(ConstValue::String(s)) => s,
+                other => panic!("Expected String, got {:?}", other),
+            };
+            // Validate ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+            assert!(
+                s.len() == 20 && s.contains('T') && s.ends_with('Z'),
+                "Invalid DateTime format: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_scalar_timestamp() {
+        let schema = r#"
+        scalar Timestamp
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          createdAt: Timestamp!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let value = mock_graph.resolve_field("Item", "createdAt");
+        let s = match value.and_then(|x| x.as_value().cloned()) {
+            Some(ConstValue::String(s)) => s,
+            other => panic!("Expected String, got {:?}", other),
+        };
+        assert!(
+            s.contains('T') && s.ends_with('Z'),
+            "Timestamp should produce datetime format: {s}"
+        );
+    }
+
+    #[test]
+    fn test_custom_scalar_date() {
+        let schema = r#"
+        scalar Date
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          birthday: Date!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let value = mock_graph.resolve_field("Item", "birthday");
+        let s = match value.and_then(|x| x.as_value().cloned()) {
+            Some(ConstValue::String(s)) => s,
+            other => panic!("Expected String, got {:?}", other),
+        };
+        // Date format: YYYY-MM-DD (10 chars, no T)
+        assert!(
+            s.len() == 10 && !s.contains('T'),
+            "Invalid Date format: {s}"
+        );
+    }
+
+    #[test]
+    fn test_custom_scalar_unknown() {
+        let schema = r#"
+        scalar JSON
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          data: JSON!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let value = mock_graph.resolve_field("Item", "data");
+        let s = match value.and_then(|x| x.as_value().cloned()) {
+            Some(ConstValue::String(s)) => s,
+            other => panic!("Expected String, got {:?}", other),
+        };
+        assert_eq!(s, "mock-JSON");
+    }
+
+    #[test]
+    fn test_custom_scalar_with_select_directive() {
+        let schema = r#"
+        scalar DateTime
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          startTime: DateTime! @select(from: ["2024-01-01T00:00:00Z", "2025-06-15T12:00:00Z"])
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        for _ in 0..10 {
+            let value = mock_graph.resolve_field("Item", "startTime");
+            let s = match value.and_then(|x| x.as_value().cloned()) {
+                Some(ConstValue::String(s)) => s,
+                other => panic!("Expected String, got {:?}", other),
+            };
+            assert!(
+                ["2024-01-01T00:00:00Z", "2025-06-15T12:00:00Z"].contains(&s.as_str()),
+                "Unexpected value: {s}"
+            );
+        }
     }
 }
