@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-12
+
+### Fixed
+- Entity references now include `@inaccessible` key fields with mock values. Previously, when a subgraph returned an entity stub (e.g., `Team` with `resolvable: false`), only visible key fields were included. The Apollo Router requires all key fields — including `@inaccessible` ones — to chain entity resolution across subgraphs.
+
 ## [0.3.2] - 2026-04-12
 
 ### Fixed

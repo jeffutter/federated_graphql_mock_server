@@ -284,11 +284,28 @@ fn load_schema(
                             .and_then(|value| value.string())
                             .unwrap();
 
-                        let res = ctx
-                            .data::<MockGraph>()
-                            .unwrap()
-                            .resolve_obj(typename)
-                            .unwrap();
+                        let mock_graph = ctx.data::<MockGraph>().unwrap();
+
+                        // Start with key field values from the mock graph
+                        let base = mock_graph.resolve_obj(typename).unwrap();
+
+                        // Merge incoming representation values (from the router)
+                        // into the entity object so key fields are preserved
+                        let res = if let Some(async_graphql::Value::Object(mut obj_map)) =
+                            base.as_value().cloned()
+                        {
+                            for (key, accessor) in item.iter() {
+                                if key.as_str() != "__typename"
+                                    && let Ok(value) =
+                                        accessor.deserialize::<async_graphql::Value>()
+                                {
+                                    obj_map.insert(key.clone(), value);
+                                }
+                            }
+                            FieldValue::value(async_graphql::Value::Object(obj_map))
+                        } else {
+                            base
+                        };
 
                         trace!("Value: {:?}", res);
 

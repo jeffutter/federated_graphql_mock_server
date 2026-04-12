@@ -88,6 +88,8 @@ pub struct MockGraph {
     interfaces: Arc<HashMap<String, Vec<String>>>,
     /// Maps union names to possible types
     unions: Arc<HashMap<String, Vec<String>>>,
+    /// Maps entity type names to their key field name sets (one per @key directive)
+    entity_keys: Arc<HashMap<String, Vec<Vec<String>>>>,
 }
 
 /// Builder for constructing a MockGraph
@@ -112,6 +114,8 @@ pub struct MockGraphBuilder {
     interface_fields: HashMap<String, HashMap<String, MockFieldConfig>>,
     /// Tracks object types that implement interfaces
     implementers: HashMap<String, HashSet<String>>,
+    /// Maps entity type names to their key field name sets (one per @key directive)
+    entity_keys: HashMap<String, Vec<Vec<String>>>,
 }
 
 impl MockGraphBuilder {
@@ -129,6 +133,7 @@ impl MockGraphBuilder {
             scalars: HashSet::new(),
             interface_fields: HashMap::new(),
             implementers: HashMap::new(),
+            entity_keys: HashMap::new(),
             source_query_name,
             source_mutation_name,
             source_subscription_name,
@@ -217,6 +222,30 @@ impl MockGraphBuilder {
         }
 
         self.objects.insert(obj_name.clone(), fields);
+
+        // Parse @key directives to track entity key fields
+        let key_field_sets: Vec<Vec<String>> = obj_type
+            .directives
+            .iter()
+            .filter(|d| d.name == "key")
+            .filter_map(|d| {
+                d.arguments.iter().find_map(|(name, value)| {
+                    if *name == "fields" {
+                        if let Value::String(s) = value {
+                            Some(parse_key_fields_string(s))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if !key_field_sets.is_empty() {
+            self.entity_keys.insert(obj_name.clone(), key_field_sets);
+        }
 
         // Register object as implementer of interfaces
         for implements in &obj_type.implements_interfaces {
@@ -428,6 +457,7 @@ impl MockGraphBuilder {
             enums: Arc::new(self.enums),
             interfaces: Arc::new(self.interfaces),
             unions: Arc::new(self.unions),
+            entity_keys: Arc::new(self.entity_keys),
         }
     }
 }
@@ -477,23 +507,53 @@ impl MockGraph {
         self.resolve_field(random_type, field_name)
     }
 
-    /// Resolve a complete object
-    pub fn resolve_obj(&self, obj_type: &str) -> Option<FieldValue<'_>> {
-        // trace!("Resolving object: {}", obj_type);
+    /// Resolve a field config, always producing a value (ignoring null probability).
+    /// Used for entity key fields which must always have values.
+    fn resolve_field_config_non_null(&self, config: &MockFieldConfig) -> Option<FieldValue<'_>> {
+        let content = match config {
+            MockFieldConfig::NonNull(content) | MockFieldConfig::Nullable(_, content) => content,
+        };
+        self.resolve_content_config(content)
+    }
 
-        // Pop the path when we're done with this object
-        // Check if it's an interface or union
+    /// Resolve a complete object.
+    ///
+    /// Returns a FieldValue without `.with_type()` wrapping. Callers that need
+    /// type info for union/interface resolution apply `.with_type()` themselves
+    /// (entity resolver, resolve_interface_obj, resolve_union_obj).
+    ///
+    /// For entity types, pre-populates key field values in the returned object
+    /// so they are accessible to field resolvers via the parent_map check.
+    pub fn resolve_obj(&self, obj_type: &str) -> Option<FieldValue<'_>> {
         if self.interfaces.contains_key(obj_type) {
             self.resolve_interface_obj(obj_type)
         } else if self.unions.contains_key(obj_type) {
             self.resolve_union_obj(obj_type)
         } else {
-            // This can be an empty object, all the fields will be resolved as the resolvers
-            // are called for each field
-            Some(
-                FieldValue::value(ConstValue::Object(IndexMap::new()))
-                    .with_type(obj_type.to_string()),
-            )
+            let mut obj_map = IndexMap::new();
+
+            // Pre-populate entity key fields so they are always present in the
+            // parent object, including @inaccessible fields needed for federation
+            if let Some(key_field_sets) = self.entity_keys.get(obj_type)
+                && let Some(obj_fields) = self.objects.get(obj_type)
+            {
+                for key_field_set in key_field_sets {
+                    for field_name in key_field_set {
+                        if obj_map.contains_key(field_name.as_str()) {
+                            continue;
+                        }
+                        if let Some(field_config) = obj_fields.get(field_name.as_str())
+                            && let Some(field_value) =
+                                self.resolve_field_config_non_null(field_config)
+                            && let Some(const_value) = field_value.as_value()
+                        {
+                            obj_map.insert(Name::new(field_name), const_value.clone());
+                        }
+                    }
+                }
+            }
+
+            Some(FieldValue::value(ConstValue::Object(obj_map)))
         }
     }
 
@@ -612,6 +672,25 @@ impl MockGraph {
                 .map(|s| FieldValue::value(ConstValue::String(s.clone()))),
         }
     }
+}
+
+/// Parse a @key fields string into a list of top-level field names.
+///
+/// Simple: "resourceUri competitionSlug" -> ["resourceUri", "competitionSlug"]
+/// Nested: "product { sku } region" -> ["product", "region"]
+fn parse_key_fields_string(fields_str: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut depth = 0usize;
+
+    for token in fields_str.split_whitespace() {
+        if depth == 0 && token != "{" && token != "}" {
+            result.push(token.to_string());
+        }
+        depth += token.chars().filter(|c| *c == '{').count();
+        depth = depth.saturating_sub(token.chars().filter(|c| *c == '}').count());
+    }
+
+    result
 }
 
 /// Generate a mock value for a custom scalar based on its name.
@@ -858,6 +937,146 @@ mod tests {
                 ["2024-01-01T00:00:00Z", "2025-06-15T12:00:00Z"].contains(&s.as_str()),
                 "Unexpected value: {s}"
             );
+        }
+    }
+
+    #[test]
+    fn test_parse_key_fields_string_simple() {
+        assert_eq!(
+            parse_key_fields_string("resourceUri competitionSlug organizationSlug"),
+            vec!["resourceUri", "competitionSlug", "organizationSlug"]
+        );
+    }
+
+    #[test]
+    fn test_parse_key_fields_string_single() {
+        assert_eq!(parse_key_fields_string("id"), vec!["id"]);
+    }
+
+    #[test]
+    fn test_parse_key_fields_string_nested() {
+        assert_eq!(
+            parse_key_fields_string("product { sku } region"),
+            vec!["product", "region"]
+        );
+    }
+
+    #[test]
+    fn test_entity_key_fields_prepopulated_in_resolve_obj() {
+        let schema = r#"
+        schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key", "@inaccessible"]) {
+          query: Query
+        }
+
+        type Query {
+          selection: MarketSelection
+        }
+
+        type Team @key(fields: "resourceUri competitionSlug organizationSlug", resolvable: false) {
+          resourceUri: String!
+          competitionSlug: String! @inaccessible
+          organizationSlug: String! @inaccessible
+        }
+
+        type MarketSelection @key(fields: "id") {
+          id: ID!
+          participantV2: Team
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        // resolve_obj for Team should pre-populate all three key fields
+        let team_value = mock_graph.resolve_obj("Team");
+        assert!(team_value.is_some());
+        let team_value = team_value.unwrap();
+        let obj = team_value.as_value().unwrap();
+        if let ConstValue::Object(map) = obj {
+            assert!(map.contains_key("resourceUri"), "missing resourceUri");
+            assert!(
+                map.contains_key("competitionSlug"),
+                "missing competitionSlug"
+            );
+            assert!(
+                map.contains_key("organizationSlug"),
+                "missing organizationSlug"
+            );
+        } else {
+            panic!("Expected Object, got {:?}", obj);
+        }
+    }
+
+    #[test]
+    fn test_multiple_key_directives() {
+        let schema = r#"
+        schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key"]) {
+          query: Query
+        }
+
+        type Query {
+          product: Product
+        }
+
+        type Product @key(fields: "id") @key(fields: "sku brand") {
+          id: ID!
+          sku: String!
+          brand: String!
+          name: String
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let product_value = mock_graph.resolve_obj("Product");
+        assert!(product_value.is_some());
+        let product_value = product_value.unwrap();
+        let obj = product_value.as_value().unwrap();
+        if let ConstValue::Object(map) = obj {
+            assert!(map.contains_key("id"), "missing id from first @key");
+            assert!(map.contains_key("sku"), "missing sku from second @key");
+            assert!(map.contains_key("brand"), "missing brand from second @key");
+            // Non-key field should NOT be pre-populated
+            assert!(
+                !map.contains_key("name"),
+                "non-key field 'name' should not be pre-populated"
+            );
+        } else {
+            panic!("Expected Object, got {:?}", obj);
+        }
+    }
+
+    #[test]
+    fn test_non_entity_type_has_empty_obj() {
+        let schema = r#"
+        type Query {
+          user: User
+        }
+
+        type User {
+          id: ID!
+          name: String
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let user_value = mock_graph.resolve_obj("User");
+        assert!(user_value.is_some());
+        let user_value = user_value.unwrap();
+        let obj = user_value.as_value().unwrap();
+        if let ConstValue::Object(map) = obj {
+            assert!(map.is_empty(), "non-entity type should have empty obj map");
+        } else {
+            panic!("Expected Object, got {:?}", obj);
         }
     }
 }
