@@ -694,7 +694,12 @@ fn parse_key_fields_string(fields_str: &str) -> Vec<String> {
 }
 
 /// Generate a mock value for a custom scalar based on its name.
-/// Well-known date/time scalar names produce valid ISO 8601 strings.
+/// Well-known scalar names produce valid values:
+/// - DateTime/Timestamp → ISO 8601 datetime strings
+/// - Date → ISO 8601 date strings
+/// - Time → ISO 8601 time strings
+/// - Long/BigInt/Int64 → string-encoded integers
+///
 /// Unknown scalars produce a placeholder string.
 fn generate_custom_scalar_value(scalar_name: &str) -> String {
     let name_lower = scalar_name.to_lowercase();
@@ -721,6 +726,9 @@ fn generate_custom_scalar_value(scalar_name: &str) -> String {
         let minute = rng.random_range(0..=59u32);
         let second = rng.random_range(0..=59u32);
         format!("{hour:02}:{minute:02}:{second:02}Z")
+    } else if name_lower == "long" || name_lower == "bigint" || name_lower == "int64" {
+        // 64-bit integer serialized as a JSON string
+        rng.random_range(10_000..10_000_000i64).to_string()
     } else {
         // Unknown custom scalar — return the scalar name as a placeholder
         format!("mock-{scalar_name}")
@@ -938,6 +946,95 @@ mod tests {
                 "Unexpected value: {s}"
             );
         }
+    }
+
+    #[test]
+    fn test_custom_scalar_long() {
+        let schema = r#"
+        scalar Long
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          amount: Long!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        // Long! should produce a string-encoded integer
+        for _ in 0..10 {
+            let value = mock_graph.resolve_field("Item", "amount");
+            let s = match value.and_then(|x| x.as_value().cloned()) {
+                Some(ConstValue::String(s)) => s,
+                other => panic!("Expected String, got {:?}", other),
+            };
+            let parsed: i64 = s.parse().unwrap_or_else(|_| panic!("Not a valid i64: {s}"));
+            assert!(
+                (10_000..10_000_000).contains(&parsed),
+                "Long value out of expected range: {parsed}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_scalar_bigint() {
+        let schema = r#"
+        scalar BigInt
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          total: BigInt!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let value = mock_graph.resolve_field("Item", "total");
+        let s = match value.and_then(|x| x.as_value().cloned()) {
+            Some(ConstValue::String(s)) => s,
+            other => panic!("Expected String, got {:?}", other),
+        };
+        s.parse::<i64>()
+            .unwrap_or_else(|_| panic!("BigInt should produce a valid i64 string: {s}"));
+    }
+
+    #[test]
+    fn test_custom_scalar_long_does_not_overmatch() {
+        let schema = r#"
+        scalar LongString
+
+        type Query {
+          item: Item
+        }
+
+        type Item {
+          data: LongString!
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        let value = mock_graph.resolve_field("Item", "data");
+        let s = match value.and_then(|x| x.as_value().cloned()) {
+            Some(ConstValue::String(s)) => s,
+            other => panic!("Expected String, got {:?}", other),
+        };
+        assert_eq!(s, "mock-LongString");
     }
 
     #[test]

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Long` custom scalar support: generates valid string-encoded integers (e.g. `"4829105"`). Also recognizes `BigInt` and `Int64` scalar names.
+
 ## [0.3.3] - 2026-04-12
 
 ### Fixed
