@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-04-28
+
 ### Added
 - `@select` directive now works on enum fields. Variant names that don't match the declared enum are ignored; if none match, the field falls back to picking from all variants.
 - `@select` selections on union and interface fields are now validated against the declared members/implementers. Names that don't match are ignored; if none match, the field falls back to picking from all members/implementers.
