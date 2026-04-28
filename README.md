@@ -111,11 +111,27 @@ type User {
 
 ### `@select(from: [String])`
 
-Selects a random value from a provided list.
+Selects a random value from a provided list. Works on `String`, `ID`, custom scalars, enums, interfaces, and unions.
+
+For enums, interfaces, and unions, each value in `from` must match a declared enum variant, interface implementer, or union member respectively. Entries that don't match are ignored, and if none match, the directive falls back to picking from all valid options.
 
 ```graphql
 type Product {
   category: String @select(from: ["Electronics", "Clothing", "Books", "Home"])
+  status: ProductStatus @select(from: ["IN_STOCK", "BACKORDERED"])
+}
+
+union SearchHit = Product | Article
+type Article { headline: String }
+
+type Query {
+  hit: SearchHit @select(from: ["Product"])
+}
+
+enum ProductStatus {
+  IN_STOCK
+  BACKORDERED
+  DISCONTINUED
 }
 ```
 
@@ -126,6 +142,17 @@ Specifies the number of items in a list.
 ```graphql
 type User {
   tags: [String!]! @count(min: 2, max: 5)
+}
+```
+
+### `@null(probability: Float)`
+
+Makes a nullable field randomly resolve to `null` with the given probability (between `0.0` and `1.0`). The `probability` argument is optional and defaults to `0.5`.
+
+```graphql
+type User {
+  middleName: String @null(probability: 0.7)
+  nickname: String @null
 }
 ```
 

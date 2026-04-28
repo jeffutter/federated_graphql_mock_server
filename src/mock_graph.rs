@@ -64,6 +64,8 @@ pub enum MockTypeConfig {
     Ref(String),
     /// Reference to an enum
     EnumRef(String),
+    /// Enum variant selected from a predefined list
+    SelectEnum { selection: Vec<String> },
     /// Reference to an interface
     InterfaceRef(String),
     /// Reference to an interface selected from a predefined list
@@ -163,7 +165,27 @@ impl MockGraphBuilder {
             }
         }
 
-        // Second pass: register object types and their fields
+        // Second pass: register objects as interface implementers so that
+        // field registration in the third pass has full implementer info
+        // (used to validate @select selections).
+        for def in &doc.definitions {
+            if let Definition::TypeDefinition(TypeDefinition::Object(obj_type)) = def {
+                let obj_name = self.canonical_object_name(obj_type.name);
+                for implements in &obj_type.implements_interfaces {
+                    let interface_name = implements.to_string();
+                    self.implementers
+                        .entry(interface_name.clone())
+                        .or_default()
+                        .insert(obj_name.clone());
+                    self.interfaces
+                        .entry(interface_name)
+                        .or_default()
+                        .push(obj_name.clone());
+                }
+            }
+        }
+
+        // Third pass: register object fields and entity keys
         for def in &doc.definitions {
             if let Definition::TypeDefinition(TypeDefinition::Object(obj_type)) = def {
                 self.register_object(obj_type);
@@ -171,6 +193,18 @@ impl MockGraphBuilder {
         }
 
         self
+    }
+
+    /// Map a schema-level object name to its canonical name (Query/Mutation/Subscription
+    /// roots are renamed to their conventional names so `register_object` and the
+    /// implementer pre-pass agree on identity).
+    fn canonical_object_name(&self, name: &str) -> String {
+        match name {
+            x if x == self.source_query_name => "Query".to_string(),
+            x if Some(x) == self.source_mutation_name.as_deref() => "Mutation".to_string(),
+            x if Some(x) == self.source_subscription_name.as_deref() => "Subscription".to_string(),
+            x => x.to_string(),
+        }
     }
 
     /// Register an enum type definition
@@ -206,13 +240,7 @@ impl MockGraphBuilder {
 
     /// Register an object type definition
     fn register_object<'a>(&mut self, obj_type: &ObjectType<'a, &'a str>) {
-        let obj_name = match obj_type.name {
-            x if x == self.source_query_name => "Query",
-            x if Some(x) == self.source_mutation_name.as_deref() => "Mutation",
-            x if Some(x) == self.source_subscription_name.as_deref() => "Subscription",
-            x => x,
-        }
-        .to_string();
+        let obj_name = self.canonical_object_name(obj_type.name);
         let mut fields = HashMap::new();
 
         // Register object fields
@@ -244,21 +272,7 @@ impl MockGraphBuilder {
             .collect();
 
         if !key_field_sets.is_empty() {
-            self.entity_keys.insert(obj_name.clone(), key_field_sets);
-        }
-
-        // Register object as implementer of interfaces
-        for implements in &obj_type.implements_interfaces {
-            let interface_name = implements.to_string();
-            self.implementers
-                .entry(interface_name.clone())
-                .or_default()
-                .insert(obj_name.clone());
-
-            self.interfaces
-                .entry(interface_name)
-                .or_default()
-                .push(obj_name.clone());
+            self.entity_keys.insert(obj_name, key_field_sets);
         }
     }
 
@@ -327,17 +341,45 @@ impl MockGraphBuilder {
             }
             _ => {
                 // Check if it's an enum, interface, union, or custom scalar
-                if self.enums.contains_key(type_name) {
-                    MockTypeConfig::EnumRef(type_name.to_string())
-                } else if self.interfaces.contains_key(type_name) {
+                if let Some(variants) = self.enums.get(type_name) {
                     if let Some(selection) = self.get_select_directive(directives) {
-                        MockTypeConfig::SelectInterfaceRef { selection }
+                        let valid: Vec<String> = selection
+                            .into_iter()
+                            .filter(|v| variants.contains(v))
+                            .collect();
+                        if valid.is_empty() {
+                            MockTypeConfig::EnumRef(type_name.to_string())
+                        } else {
+                            MockTypeConfig::SelectEnum { selection: valid }
+                        }
+                    } else {
+                        MockTypeConfig::EnumRef(type_name.to_string())
+                    }
+                } else if let Some(implementers) = self.interfaces.get(type_name) {
+                    if let Some(selection) = self.get_select_directive(directives) {
+                        let valid: Vec<String> = selection
+                            .into_iter()
+                            .filter(|v| implementers.contains(v))
+                            .collect();
+                        if valid.is_empty() {
+                            MockTypeConfig::InterfaceRef(type_name.to_string())
+                        } else {
+                            MockTypeConfig::SelectInterfaceRef { selection: valid }
+                        }
                     } else {
                         MockTypeConfig::InterfaceRef(type_name.to_string())
                     }
-                } else if self.unions.contains_key(type_name) {
+                } else if let Some(members) = self.unions.get(type_name) {
                     if let Some(selection) = self.get_select_directive(directives) {
-                        MockTypeConfig::SelectUnionRef { selection }
+                        let valid: Vec<String> = selection
+                            .into_iter()
+                            .filter(|v| members.contains(v))
+                            .collect();
+                        if valid.is_empty() {
+                            MockTypeConfig::UnionRef(type_name.to_string())
+                        } else {
+                            MockTypeConfig::SelectUnionRef { selection: valid }
+                        }
                     } else {
                         MockTypeConfig::UnionRef(type_name.to_string())
                     }
@@ -653,6 +695,9 @@ impl MockGraph {
                     .choose(&mut rand::rng())
                     .map(|v| FieldValue::value(ConstValue::Enum(Name::new(v))))
             }
+            MockTypeConfig::SelectEnum { selection } => selection
+                .choose(&mut rand::rng())
+                .map(|v| FieldValue::value(ConstValue::Enum(Name::new(v)))),
             MockTypeConfig::InterfaceRef(interface_name) => {
                 self.resolve_interface_obj(interface_name)
             }
@@ -791,6 +836,146 @@ mod tests {
             user_color.and_then(|x| x.as_value().cloned()),
             Some(ConstValue::Enum(color)) if ["RED", "GREEN", "BLUE"].contains(&color.as_str())
         ));
+    }
+
+    #[test]
+    fn test_select_directive_on_enum() {
+        let schema = r#"
+        type Query {
+          user: User
+        }
+
+        type User {
+          color: Color @select(from: ["RED", "BLUE"])
+          fallback: Color @select(from: ["NOT_A_VARIANT"])
+        }
+
+        enum Color {
+          RED
+          GREEN
+          BLUE
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        // @select narrows the variants — GREEN should never appear.
+        for _ in 0..50 {
+            let value = mock_graph.resolve_field("User", "color");
+            let name = match value.and_then(|x| x.as_value().cloned()) {
+                Some(ConstValue::Enum(name)) => name,
+                other => panic!("Expected Enum, got {:?}", other),
+            };
+            assert!(
+                ["RED", "BLUE"].contains(&name.as_str()),
+                "unexpected variant: {name}"
+            );
+        }
+
+        // When every selected value is invalid, fall back to all defined variants.
+        let fallback = mock_graph.resolve_field("User", "fallback");
+        assert!(matches!(
+            fallback.and_then(|x| x.as_value().cloned()),
+            Some(ConstValue::Enum(name)) if ["RED", "GREEN", "BLUE"].contains(&name.as_str())
+        ));
+    }
+
+    #[test]
+    fn test_select_directive_on_union() {
+        let schema = r#"
+        type Query {
+          wrapper: Wrapper
+        }
+
+        union Item = Book | Movie | Album
+
+        type Book { title: String }
+        type Movie { title: String }
+        type Album { title: String }
+
+        type Wrapper {
+          item: Item @select(from: ["Book", "Movie"])
+          fallback: Item @select(from: ["NotARealType"])
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        // @select narrows union members — Album should never appear.
+        // The Debug impl on a WithType FieldValue prints the type name.
+        for _ in 0..50 {
+            let value = mock_graph
+                .resolve_field("Wrapper", "item")
+                .expect("resolve_field returned None");
+            let ty = format!("{:?}", value);
+            assert!(ty == "Book" || ty == "Movie", "unexpected type: {ty}");
+        }
+
+        // When all selected names are invalid, fall back to all members.
+        let fallback = mock_graph
+            .resolve_field("Wrapper", "fallback")
+            .expect("resolve_field returned None");
+        let ty = format!("{:?}", fallback);
+        assert!(
+            ty == "Book" || ty == "Movie" || ty == "Album",
+            "unexpected type: {ty}"
+        );
+    }
+
+    #[test]
+    fn test_select_directive_on_interface() {
+        let schema = r#"
+        type Query {
+          wrapper: Wrapper
+        }
+
+        interface Person {
+          id: ID!
+        }
+
+        type User implements Person {
+          id: ID!
+        }
+        type Customer implements Person {
+          id: ID!
+        }
+        type Admin implements Person {
+          id: ID!
+        }
+
+        type Wrapper {
+          person: Person @select(from: ["User", "Customer"])
+          fallback: Person @select(from: ["NotARealType"])
+        }
+        "#;
+
+        let doc = parse_schema::<&str>(schema).unwrap();
+        let mock_graph = MockGraph::builder(String::from("Query"), None, None)
+            .register_document(&doc)
+            .build();
+
+        for _ in 0..50 {
+            let value = mock_graph
+                .resolve_field("Wrapper", "person")
+                .expect("resolve_field returned None");
+            let ty = format!("{:?}", value);
+            assert!(ty == "User" || ty == "Customer", "unexpected type: {ty}");
+        }
+
+        let fallback = mock_graph
+            .resolve_field("Wrapper", "fallback")
+            .expect("resolve_field returned None");
+        let ty = format!("{:?}", fallback);
+        assert!(
+            ty == "User" || ty == "Customer" || ty == "Admin",
+            "unexpected type: {ty}"
+        );
     }
 
     #[test]
